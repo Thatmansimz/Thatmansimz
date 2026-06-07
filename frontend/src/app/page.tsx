@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { Speedometer } from "../components/Speedometer";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -229,46 +230,105 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── KPI Cards ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-500 mb-1">Daily P&L</p>
-          <p className={cn("text-2xl font-bold", dailyPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
-            {dailyPnl >= 0 ? "+" : ""}${dailyPnl.toFixed(2)}
-          </p>
-          <div className="mt-2 h-1 bg-slate-800 rounded-full overflow-hidden">
-            <div
-              className={cn("h-full rounded-full transition-all", dailyPnl >= 0 ? "bg-emerald-500" : "bg-rose-500")}
-              style={{ width: `${Math.min(100, Math.abs(targetPct))}%` }}
-            />
+      {/* ── Instrument Cluster ── */}
+      <div
+        className="rounded-2xl border border-slate-700/60 p-6"
+        style={{
+          background: "radial-gradient(ellipse at 50% 0%, #0f1e35 0%, #080e1a 70%)",
+          boxShadow: "0 0 60px #0ea5e920, inset 0 1px 0 #334155",
+        }}
+      >
+        {/* Cluster label strip */}
+        <div className="flex items-center justify-between mb-4 px-2">
+          <span
+            className="text-[10px] font-bold tracking-[0.25em] uppercase"
+            style={{ color: "#0ea5e9" }}
+          >
+            Instrument Cluster
+          </span>
+          <div className="flex items-center gap-3 text-[10px] text-slate-500">
+            <span>{perf?.wins ?? 0}W / {perf?.losses ?? 0}L</span>
+            <span>•</span>
+            <span>PF {perf?.profit_factor?.toFixed(2) ?? "—"}</span>
+            <span>•</span>
+            <span>{openTrades.length} open positions</span>
           </div>
-          <p className="text-[10px] text-slate-600 mt-1">Target: ${status?.daily_target?.toLocaleString()}</p>
         </div>
 
-        <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-500 mb-1">Win Rate</p>
-          <p className="text-2xl font-bold text-white">
-            {perf?.win_rate?.toFixed(1) ?? "—"}%
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            {perf?.wins ?? 0}W / {perf?.losses ?? 0}L &nbsp;|&nbsp; PF {perf?.profit_factor?.toFixed(2) ?? "—"}
-          </p>
+        {/* Four gauges */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 place-items-center">
+          {/* 1. Daily P&L */}
+          <Speedometer
+            value={Math.max(0, dailyPnl)}
+            max={status?.daily_target ?? 1000}
+            label="Daily P&L"
+            sublabel={`${dailyPnl >= 0 ? "+" : ""}$${dailyPnl.toFixed(0)} today`}
+            colorMode="profit"
+            size={190}
+            formatCenter={(v) => `$${v.toFixed(0)}`}
+          />
+
+          {/* 2. Win Rate */}
+          <Speedometer
+            value={perf?.win_rate ?? 0}
+            max={100}
+            label="Win Rate"
+            sublabel={`avg win $${perf?.avg_win?.toFixed(0) ?? "0"}`}
+            colorMode="confidence"
+            unit="%"
+            size={190}
+            formatCenter={(v) => `${v.toFixed(1)}%`}
+          />
+
+          {/* 3. AI Confidence */}
+          <Speedometer
+            value={(status?.ai_threshold ?? 0.65) * 100}
+            max={100}
+            label="AI Threshold"
+            sublabel={`stop ≤ $${status?.max_stop_dollars ?? 250}`}
+            colorMode="confidence"
+            unit="%"
+            size={190}
+            formatCenter={(v) => `${v.toFixed(0)}%`}
+          />
+
+          {/* 4. Risk Level */}
+          <Speedometer
+            value={
+              propStatus && propStatus.daily_loss_limit > 0
+                ? propStatus.daily_loss_used
+                : Math.abs(Math.min(0, dailyPnl))
+            }
+            max={
+              propStatus && propStatus.daily_loss_limit > 0
+                ? propStatus.daily_loss_limit
+                : status?.max_stop_dollars ?? 250
+            }
+            label="Risk Used"
+            sublabel={
+              propStatus && propStatus.daily_loss_limit > 0
+                ? `$${propStatus.daily_loss_remaining.toFixed(0)} remaining`
+                : "daily loss exposure"
+            }
+            colorMode="risk"
+            size={190}
+            formatCenter={(v) => `$${v.toFixed(0)}`}
+          />
         </div>
 
-        <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-500 mb-1">Trades Today</p>
-          <p className="text-2xl font-bold text-white">{todayStats?.trades_count ?? 0}</p>
-          <p className="text-xs text-slate-500 mt-1">
-            {openTrades.length} open &nbsp;|&nbsp; Avg ${perf?.avg_win?.toFixed(0) ?? "—"}/win
-          </p>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4">
-          <p className="text-xs text-slate-500 mb-1">AI Confidence</p>
-          <p className="text-2xl font-bold text-white">
-            {Math.round((status?.ai_threshold ?? 0.65) * 100)}%
-          </p>
-          <p className="text-xs text-slate-500 mt-1">Min threshold &nbsp;|&nbsp; Max stop ${status?.max_stop_dollars}</p>
+        {/* Bottom stat strip */}
+        <div className="mt-5 grid grid-cols-4 gap-2 text-center border-t border-slate-800 pt-4">
+          {[
+            { label: "Trades Today", value: todayStats?.trades_count ?? 0 },
+            { label: "Total P&L",    value: `$${(perf?.total_pnl ?? 0).toFixed(0)}` },
+            { label: "Avg Win",      value: `$${(perf?.avg_win ?? 0).toFixed(0)}` },
+            { label: "Avg Loss",     value: `$${(perf?.avg_loss ?? 0).toFixed(0)}` },
+          ].map((s) => (
+            <div key={s.label}>
+              <p className="text-[10px] text-slate-600 uppercase tracking-wider">{s.label}</p>
+              <p className="text-sm font-bold text-white font-mono">{s.value}</p>
+            </div>
+          ))}
         </div>
       </div>
 
