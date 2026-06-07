@@ -3,7 +3,7 @@
 Model Training Script
 Downloads 2 years of historical data for each configured symbol, engineers
 all technical features, trains the GradientBoosting + RandomForest ensemble,
-and saves the models to backend/models/trained/.
+and saves the models to backend/data/models/.
 
 Usage:
     python scripts/train_model.py
@@ -133,8 +133,7 @@ def main():
             print_metrics(m)
 
     # Model file locations
-    model_dir = os.path.join(os.path.dirname(__file__), "..", "backend", "models", "trained")
-    model_dir = os.path.abspath(model_dir)
+    model_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend", "data", "models"))
     print(f"\n  Models saved to: {model_dir}")
     if os.path.exists(model_dir):
         for f in sorted(os.listdir(model_dir)):
