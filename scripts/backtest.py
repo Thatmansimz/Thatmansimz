@@ -236,6 +236,9 @@ def run_orb_backtest(
     strategy.max_stop_dollars = args.max_stop
     strategy.entry_mode = args.entry_mode
     strategy.target_r_multiple = args.target_r
+    # The min-R:R validation gate must not exceed the target we're testing,
+    # otherwise every signal is rejected for "insufficient reward".
+    strategy.min_rr = min(strategy.min_rr, args.target_r)
     if args.no_trend:
         strategy.require_trend = False
         strategy.use_ema_filter = False
