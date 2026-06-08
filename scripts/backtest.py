@@ -56,6 +56,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--contracts", type=int, default=1, help="Fixed contracts per trade (default: 1)")
     parser.add_argument("--size-to-budget", action="store_true", help="Auto-size contracts to use the full risk budget per trade")
     parser.add_argument("--risk-per-trade", type=float, default=None, help="$ risk budget per trade for sizing (default: --max-stop)")
+    # ── V2 overlay ──
+    parser.add_argument("--v2-filter", action="store_true",
+                        help="Layer the V2 two-indications filter on top of the ORB signal "
+                             "(HA flat-candle velocity break + total-engulfing confirmation)")
     return parser.parse_args()
 
 
@@ -229,6 +233,83 @@ def run_backtest(
     }
 
 
+def _v2_two_indications(sub: pd.DataFrame, direction: str) -> bool:
+    """
+    Returns True only if the business-partner V2 two-indications filter passes
+    on the two most recent bars of `sub`.
+
+    Indication 1 (bar n-1, prior bar):
+      • Heikin Ashi candle is a STRONG candle in the signal direction:
+          Long  → flat bottom (no lower shadow) and HA close above VWAP and EMA-12
+          Short → flat top    (no upper shadow) and HA close below VWAP and EMA-12
+
+    Indication 2 (bar n, current bar):
+      • Current bar TOTALLY ENGULFS the prior bar:
+          c_high > p_high  AND  c_low < p_low
+      • Closes in the direction of the bias:
+          Long  → close > open
+          Short → close < open
+    """
+    if len(sub) < 3:
+        return False
+
+    # ── Heikin Ashi for the full slice (path-dependent) ──
+    o = sub["open"].to_numpy(dtype=float)
+    h = sub["high"].to_numpy(dtype=float)
+    l = sub["low"].to_numpy(dtype=float)
+    c = sub["close"].to_numpy(dtype=float)
+    ha_c = (o + h + l + c) / 4.0
+    ha_o = np.empty(len(sub))
+    ha_o[0] = (o[0] + c[0]) / 2.0
+    for i in range(1, len(sub)):
+        ha_o[i] = (ha_o[i - 1] + ha_c[i - 1]) / 2.0
+    ha_h = np.maximum.reduce([h, ha_o, ha_c])
+    ha_l = np.minimum.reduce([l, ha_o, ha_c])
+
+    # indicators on the full slice
+    ema12 = sub["close"].ewm(span=12, adjust=False).mean()
+    typical = (sub["high"] + sub["low"] + sub["close"]) / 3.0
+    vol = sub["volume"].replace(0, np.nan)
+    vwap_series = (typical * sub["volume"]).cumsum() / vol.cumsum()
+    vwap = float(vwap_series.iloc[-2])
+    ema12_prev = float(ema12.iloc[-2])
+
+    # bar n-1 HA values
+    ha_o_prev = ha_o[-2]; ha_h_prev = ha_h[-2]
+    ha_l_prev = ha_l[-2]; ha_c_prev = ha_c[-2]
+
+    # shadow tolerance: 8% of a 14-bar ATR (or 1 tick minimum)
+    recent = sub.tail(14)
+    tr_series = pd.concat([
+        recent["high"] - recent["low"],
+        (recent["high"] - recent["close"].shift(1)).abs(),
+        (recent["low"]  - recent["close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr_pts = float(tr_series.mean()) if not tr_series.empty else 1.0
+    tol = max(atr_pts * 0.08, 0.25)
+
+    # ── Indication 1 ──
+    if direction == "long":
+        flat_bottom = (ha_c_prev > ha_o_prev) and (min(ha_o_prev, ha_c_prev) - ha_l_prev <= tol)
+        ind1 = flat_bottom and (ha_c_prev > vwap) and (ha_c_prev > ema12_prev)
+    else:
+        flat_top = (ha_c_prev < ha_o_prev) and (ha_h_prev - max(ha_o_prev, ha_c_prev) <= tol)
+        ind1 = flat_top and (ha_c_prev < vwap) and (ha_c_prev < ema12_prev)
+
+    if not ind1:
+        return False
+
+    # ── Indication 2 ──
+    p_hi = float(sub["high"].iloc[-2]);  p_lo = float(sub["low"].iloc[-2])
+    c_hi = float(sub["high"].iloc[-1]);  c_lo = float(sub["low"].iloc[-1])
+    c_op = float(sub["open"].iloc[-1]);  c_cl = float(sub["close"].iloc[-1])
+
+    total_engulf = (c_hi > p_hi) and (c_lo < p_lo)
+    directional  = (c_cl > c_op) if direction == "long" else (c_cl < c_op)
+
+    return total_engulf and directional
+
+
 def run_orb_backtest(
     symbol: str,
     df: pd.DataFrame,
@@ -309,6 +390,11 @@ def run_orb_backtest(
         # Per-side cap unless re-entry is explicitly allowed
         if not args.allow_reentry and direction in taken_today[date_str]:
             continue
+
+        # Optional V2 two-indications overlay (--v2-filter)
+        if getattr(args, "v2_filter", False):
+            if not _v2_two_indications(sub, direction):
+                continue
 
         entry = signal["entry_price"]
         stop = signal["stop_loss"]
@@ -507,6 +593,8 @@ def main():
     print(f"  Max stop : ${args.max_stop:.0f}")
     print(f"  Daily tgt: ${args.daily_target:,.0f}")
     print(f"  Daily lim: ${args.daily_loss_limit:,.0f}")
+    if getattr(args, "v2_filter", False):
+        print(f"  V2 filter: ON  (HA flat-candle + total-engulf gate)")
 
     from backend.services.market_data import MarketDataService
 
