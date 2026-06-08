@@ -71,6 +71,15 @@ class ORBStrategy(BaseStrategy):
         self.max_stop_dollars = getattr(config, "MAX_STOP_LOSS_DOLLARS", 250.0) if config else 250.0
         self.min_rr = getattr(config, "MIN_RISK_REWARD_RATIO", 2.0) if config else 2.0
 
+        # ── Red-folder news filter ──
+        from backend.services.news_filter import NewsFilter
+        self.news_filter = NewsFilter(
+            enabled=getattr(config, "NEWS_FILTER_ENABLED", True) if config else True,
+            pre_minutes=getattr(config, "NEWS_BLACKOUT_PRE_MIN", 15) if config else 15,
+            post_minutes=getattr(config, "NEWS_BLACKOUT_POST_MIN", 15) if config else 15,
+            calendar_path=getattr(config, "NEWS_CALENDAR_PATH", "data/news_calendar.json") if config else "data/news_calendar.json",
+        )
+
     # ──────────────────────────────────────────────────────────────────────
     # Helpers
     # ──────────────────────────────────────────────────────────────────────
@@ -120,6 +129,12 @@ class ORBStrategy(BaseStrategy):
         cutoff_min = self._minute_of_day(self.entry_cutoff)
         curr_min = self._minute_of_day(et[-1])
         if curr_min < or_end_min or curr_min > cutoff_min:
+            return None
+
+        # ── Red-folder news blackout ──
+        blackout, why = self.news_filter.in_blackout(et[-1])
+        if blackout:
+            logger.debug("Skipping %s — news blackout (%s)", symbol, why)
             return None
 
         rng = self._opening_range(day_df, et)

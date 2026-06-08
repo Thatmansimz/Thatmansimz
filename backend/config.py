@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # Active strategy: "orb" | "momentum" | "ml"
     STRATEGY: str = "orb"
 
+    # Red-folder (high-impact) news filter
+    NEWS_FILTER_ENABLED: bool = True
+    NEWS_BLACKOUT_PRE_MIN: int = 15
+    NEWS_BLACKOUT_POST_MIN: int = 15
+    NEWS_CALENDAR_PATH: str = "data/news_calendar.json"
+
     # Risk management
     MAX_STOP_LOSS_DOLLARS: float = 250.0
     DAILY_PROFIT_TARGET_DOLLARS: float = 1000.0

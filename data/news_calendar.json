@@ -1,0 +1,9 @@
+{
+  "_comment": "Red-folder (high-impact) economic events. Populate weekly from ForexFactory (filter: High impact, USD). Times in US/Eastern. Only 'impact':'High' rows are used. The strategy also blocks recurring 08:30/10:00/14:00 ET windows automatically.",
+  "_source": "https://www.forexfactory.com/calendar (set filter to High impact, USD)",
+  "events": [
+    {"datetime": "2026-06-10T08:30:00", "impact": "High", "title": "Core CPI m/m"},
+    {"datetime": "2026-06-17T14:00:00", "impact": "High", "title": "FOMC Statement & Rate Decision"},
+    {"datetime": "2026-07-02T08:30:00", "impact": "High", "title": "Non-Farm Payrolls"}
+  ]
+}

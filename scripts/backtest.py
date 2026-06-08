@@ -44,6 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--entry-mode", default="icc", choices=["icc", "breakout"], help="ORB entry model (default: icc)")
     parser.add_argument("--no-trend", action="store_true", help="Disable the ADX/EMA/VWAP regime filter")
     parser.add_argument("--no-breakeven", action="store_true", help="Disable move-stop-to-breakeven at +1R")
+    parser.add_argument("--no-news", action="store_true", help="Disable the red-folder news blackout filter")
+    parser.add_argument("--target-r", type=float, default=2.0, help="Target as a multiple of risk (default: 2.0)")
     return parser.parse_args()
 
 
@@ -233,11 +235,16 @@ def run_orb_backtest(
     strategy = ORBStrategy(config=None)
     strategy.max_stop_dollars = args.max_stop
     strategy.entry_mode = args.entry_mode
+    strategy.target_r_multiple = args.target_r
     if args.no_trend:
         strategy.require_trend = False
         strategy.use_ema_filter = False
         strategy.use_vwap_filter = False
+    if args.no_news:
+        strategy.news_filter.enabled = False
     use_breakeven = not args.no_breakeven
+
+    n_signals = 0
 
     point_value_map = {"MES": 5.0, "MNQ": 2.0, "MGC": 10.0}
     point_value = point_value_map.get(symbol.upper(), 5.0)
@@ -266,6 +273,7 @@ def run_orb_backtest(
         signal = strategy.generate_signal(sub, symbol)
         if signal is None:
             continue
+        n_signals += 1
 
         direction = signal["direction"]
         if direction in taken_today[date_str]:
@@ -329,6 +337,8 @@ def run_orb_backtest(
             "outcome": outcome, "pnl": round(pnl, 2), "equity": round(equity, 2),
         })
         equity_curve.append({"date": date_str, "equity": equity})
+
+    print(f"  Signals fired: {n_signals} | Trades taken: {len(trades)}")
 
     return {
         "symbol": symbol, "period": args.period, "bars_total": n,
