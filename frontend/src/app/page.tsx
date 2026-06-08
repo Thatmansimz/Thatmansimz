@@ -30,6 +30,7 @@ type Status = {
   sessions?: SessionInfo[];
   now_et?: string;
   orb_window_active?: boolean;
+  orb_after_cutoff?: boolean;
   orb_opens_in_min?: number | null;
   cycles_today?: number;
   signals_today?: number;
@@ -213,11 +214,18 @@ function EngineStatePill({ status }: { status?: Status | null }) {
     if (status?.orb_window_active) {
       label = "LIVE"; color = "#00ff88"; pulse = true;
       title = "ORB window is open (9:35–14:00 ET) — the engine is actively taking paper trades.";
-    } else {
+    } else if (status?.orb_after_cutoff) {
+      // Past 14:00 ET today — done trading for the day, NY session still open
       const eta = fmtMins(status?.orb_opens_in_min);
-      label = eta ? `ARMED · NY IN ${eta}` : "ARMED";
+      label = eta ? `ARMED · NEXT OPEN ${eta}` : "ARMED · DONE TODAY";
       color = "#ffaa00";
-      title = "Engine armed and watching. ORB only trades the NY session (9:35–14:00 ET) — idle through Asia/London by design.";
+      title = "ORB entry window closed at 14:00 ET. Done trading for today — engine re-arms tomorrow at 9:35 AM ET.";
+    } else {
+      // Before 9:35 AM ET — waiting for the session to start
+      const eta = fmtMins(status?.orb_opens_in_min);
+      label = eta ? `ARMED · OPENS IN ${eta}` : "ARMED";
+      color = "#ffaa00";
+      title = "Engine armed. ORB window opens at 9:35 AM ET — idle through Asia/London by design.";
     }
   }
   return (
@@ -814,13 +822,21 @@ export default function Dashboard() {
                   >
                     LIVE · NY SESSION
                   </span>
+                ) : status?.orb_after_cutoff ? (
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
+                    style={{ background: "#ffaa0018", border: "1px solid #ffaa0044", color: "#ffaa00" }}
+                    title="ORB cutoff reached (14:00 ET). No new entries today — re-arms tomorrow at 9:35 AM ET."
+                  >
+                    ARMED · DONE FOR TODAY
+                  </span>
                 ) : (
                   <span
                     className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
                     style={{ background: "#ffaa0018", border: "1px solid #ffaa0044", color: "#ffaa00" }}
-                    title="Engine armed — ORB only trades the NY session (9:35–14:00 ET). Watching, not trading."
+                    title="Engine armed — ORB window opens at 9:35 AM ET."
                   >
-                    ARMED · WAITING FOR NY OPEN
+                    ARMED · WAITING FOR ORB OPEN
                   </span>
                 )
               )}
@@ -979,7 +995,13 @@ export default function Dashboard() {
               <div className="h-40 flex flex-col items-center justify-center gap-2">
                 <div className="text-2xl" style={{ color: "#1a2d4a" }}>◉</div>
                 <p className="text-xs font-mono-hud tracking-widest" style={{ color: "#1a2d4a" }}>
-                  {status?.trading_enabled && status?.orb_window_active ? "WATCHING FOR ORB SETUP..." : "ARMED · WAITING FOR NY SESSION"}
+                  {status?.trading_enabled
+                    ? status?.orb_window_active
+                      ? "WATCHING FOR ORB SETUP..."
+                      : status?.orb_after_cutoff
+                        ? "ORB CUTOFF · DONE FOR TODAY · RE-ARMS 9:35 AM ET"
+                        : "ARMED · ORB OPENS AT 9:35 AM ET"
+                    : "ENGINE NOT ARMED · CLICK START TRADING"}
                 </p>
               </div>
             ) : (

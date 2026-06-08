@@ -46,17 +46,20 @@ def _orb_window_status() -> dict:
     is_weekday = now.weekday() < 5
     active = is_weekday and open_t <= now.time() <= close_t
 
-    # Minutes until the next ORB open (today if still ahead, else next weekday).
+    # After the 14:00 cutoff (but NY session still open): done for today.
+    after_cutoff = is_weekday and now.time() > close_t
+
+    # Minutes until the next ORB open — always the next weekday at 9:35 AM ET.
     opens_in = None
     if not active:
         nxt = now.replace(hour=9, minute=35, second=0, microsecond=0)
-        if now.time() > close_t or now.weekday() >= 5:
+        if now.time() >= close_t or now.weekday() >= 5:
             nxt = nxt + timedelta(days=1)
         while nxt.weekday() >= 5 or nxt <= now:
             nxt = nxt + timedelta(days=1)
         opens_in = int((nxt - now).total_seconds() // 60)
 
-    return {"active": active, "opens_in_min": opens_in}
+    return {"active": active, "after_cutoff": after_cutoff, "opens_in_min": opens_in}
 
 
 # Global service instances
@@ -155,6 +158,7 @@ async def get_status():
         # ORB trade window: the strategy only fires 9:35–14:00 ET on weekdays.
         # Used by the UI to show ARMED (enabled, waiting) vs LIVE (in-window).
         "orb_window_active": orb["active"],
+        "orb_after_cutoff": orb["after_cutoff"],
         "orb_opens_in_min": orb["opens_in_min"],
         # Futures platform → headline pill follows 24/5 futures hours, not the
         # 9:30–16:00 stock session.
