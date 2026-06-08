@@ -15,6 +15,8 @@ ET = pytz.timezone("America/New_York")
 POINT_VALUES = {
     "MES": 5.0,
     "MNQ": 2.0,
+    "NQ": 20.0,
+    "ES": 50.0,
     "MGC": 10.0,
     "MYM": 0.5,
     "M2K": 5.0,

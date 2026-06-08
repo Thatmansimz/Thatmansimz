@@ -7,9 +7,14 @@ from sqlalchemy.orm import Session
 from backend.models.trade import Trade, DailyStats
 from backend.models.signal import Signal
 from backend.models.account import Account
-from backend.services.risk_manager import RiskManager
+from backend.services.risk_manager import RiskManager, POINT_VALUES
 
 logger = logging.getLogger(__name__)
+
+
+def _point_value(symbol: str) -> float:
+    """Dollars per 1-point move per contract for this symbol."""
+    return POINT_VALUES.get(symbol.upper(), 5.0)
 
 
 class ExecutionService:
@@ -161,7 +166,7 @@ class ExecutionService:
                 pass
 
         # Calculate unrealized P&L
-        pv = 5.0  # default point value
+        pv = _point_value(trade.symbol)
         if trade.side == "long":
             pnl = (current_price - trade.entry_price) * pv * trade.qty
         else:
@@ -201,7 +206,7 @@ class ExecutionService:
         return True
 
     async def _finalize_trade(self, trade: Trade, exit_price: float, reason: str):
-        pv = 5.0
+        pv = _point_value(trade.symbol)
         if trade.side == "long":
             gross_pnl = (exit_price - trade.entry_price) * pv * trade.qty
         else:
