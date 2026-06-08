@@ -347,6 +347,87 @@ function EdgeRow({ name, b }: { name: string; b: Bucket }) {
   );
 }
 
+/* ── Head-to-head instrument comparison: WHERE is the edge? ── */
+function InstrumentCompare({ bySymbol }: { bySymbol: Record<string, Bucket> }) {
+  const entries = Object.entries(bySymbol).filter(([, b]) => b.trades > 0);
+  if (entries.length === 0) return null;
+
+  // Rank by expectancy ($/trade) — the number that scales when you add size.
+  const ranked = [...entries].sort((a, b) => b[1].expectancy - a[1].expectancy);
+  const leader = ranked.length > 1 ? ranked[0][0] : null;
+  const maxAbsPnl = Math.max(...entries.map(([, b]) => Math.abs(b.pnl)), 1);
+  const accents = ["#00d4ff", "#7c3aed", "#00ff88", "#ffaa00"];
+
+  return (
+    <div className="mt-5 pt-4" style={{ borderTop: "1px solid #1a2d4a" }}>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>
+          By Instrument · where the edge lives
+        </p>
+        <span className="text-[9px] font-mono-hud" style={{ color: "#334155" }}>ranked by $/trade</span>
+      </div>
+      <div className={cn("grid gap-3", ranked.length >= 2 ? "sm:grid-cols-2" : "grid-cols-1")}>
+        {ranked.map(([sym, b], i) => {
+          const pos = b.pnl >= 0;
+          const isLeader = sym === leader;
+          const accent = accents[i % accents.length];
+          const barPct = Math.min(100, (Math.abs(b.pnl) / maxAbsPnl) * 100);
+          return (
+            <div
+              key={sym}
+              className="rounded-xl p-3 relative overflow-hidden"
+              style={{
+                background: "#0a1525",
+                border: `1px solid ${isLeader ? "#00ff8855" : "#1a2d4a"}`,
+                boxShadow: isLeader ? "0 0 24px #00ff8814" : "none",
+              }}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: accent, boxShadow: `0 0 8px ${accent}` }} />
+                  <span className="font-display font-bold text-sm tracking-wider" style={{ color: "#e2e8f0" }}>{sym}</span>
+                  {isLeader && (
+                    <span className="px-1.5 py-0.5 rounded text-[8px] font-mono-hud font-bold tracking-widest"
+                      style={{ background: "#00ff8822", border: "1px solid #00ff8844", color: "#00ff88" }}>
+                      ◆ LEADING
+                    </span>
+                  )}
+                </div>
+                <span className="text-[10px] font-mono-hud" style={{ color: "#475569" }}>{b.trades} trades</span>
+              </div>
+
+              <div className="flex items-end justify-between mb-2">
+                <div>
+                  <div className="font-mono-hud font-bold text-lg leading-none" style={{ color: pos ? "#00ff88" : "#ff3366" }}>
+                    {pos ? "+" : ""}${b.pnl.toFixed(0)}
+                  </div>
+                  <div className="text-[9px] font-mono-hud mt-0.5" style={{ color: "#475569" }}>net P&amp;L</div>
+                </div>
+                <div className="text-right">
+                  <div className="font-mono-hud font-bold text-sm leading-none" style={{ color: b.win_rate >= 50 ? "#00ff88" : "#ffaa00" }}>
+                    {b.win_rate}%
+                  </div>
+                  <div className="text-[9px] font-mono-hud mt-0.5" style={{ color: "#475569" }}>{b.wins}W · {b.losses}L</div>
+                </div>
+              </div>
+
+              {/* P&L magnitude bar (relative to the strongest instrument) */}
+              <div className="h-1.5 rounded-full overflow-hidden mb-2" style={{ background: "#0f1d33" }}>
+                <div style={{ width: `${barPct}%`, height: "100%", background: pos ? "#00ff88" : "#ff3366", boxShadow: `0 0 8px ${pos ? "#00ff88" : "#ff3366"}` }} />
+              </div>
+
+              <div className="flex items-center justify-between text-[9px] font-mono-hud" style={{ color: "#64748b" }}>
+                <span>exp <span style={{ color: b.expectancy >= 0 ? "#00ff88" : "#ff3366", fontWeight: 700 }}>{b.expectancy >= 0 ? "+" : ""}${b.expectancy.toFixed(0)}/t</span></span>
+                <span>payoff <span style={{ color: "#94a3b8" }}>{b.payoff.toFixed(2)}x</span></span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function InsightsPanel({ insights, onRun, onReset, running }: {
   insights: Insights | null; onRun: () => void; onReset: () => void; running: boolean;
 }) {
@@ -417,6 +498,9 @@ function InsightsPanel({ insights, onRun, onReset, running }: {
           </div>
         </div>
       </div>
+      {/* Head-to-head: which instrument is carrying the edge */}
+      <InstrumentCompare bySymbol={insights.by_symbol} />
+
       {/* Edge map */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mt-5 pt-4" style={{ borderTop: "1px solid #1a2d4a" }}>
         <div>
