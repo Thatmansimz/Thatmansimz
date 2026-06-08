@@ -40,6 +40,19 @@ class TradingScheduler:
         self._task: asyncio.Task = None
         self._cycle_interval_seconds = 60
 
+        # Select the active strategy. "ml" uses the AI engine directly;
+        # rule-based strategies operate on a freshly fetched DataFrame.
+        self.strategy_name = getattr(settings, "STRATEGY", "ml").lower()
+        self.strategy = None
+        if self.strategy_name == "orb":
+            from backend.strategies.orb import ORBStrategy
+            self.strategy = ORBStrategy(settings)
+        elif self.strategy_name == "momentum":
+            from backend.strategies.momentum import MomentumStrategy
+            self.strategy = MomentumStrategy(settings)
+        _scheduler_state["strategy"] = self.strategy_name
+        logger.info("Active strategy: %s", self.strategy_name)
+
     async def start(self):
         if self._running:
             return
@@ -99,12 +112,19 @@ class TradingScheduler:
 
     async def _scan_symbol(self, symbol: str, db, daily_stats):
         try:
-            signal_data = self.ai.generate_signal(
-                symbol=symbol,
-                confidence_threshold=settings.AI_CONFIDENCE_THRESHOLD,
-                max_stop_dollars=settings.MAX_STOP_LOSS_DOLLARS,
-                min_rr=settings.MIN_RISK_REWARD_RATIO,
-            )
+            if self.strategy is not None:
+                # Rule-based strategy (ORB, momentum): fetch data and evaluate
+                df = self.market_data.get_historical(symbol, period="10d", interval="5m")
+                df = self.market_data.add_indicators(df)
+                signal_data = self.strategy.generate_signal(df, symbol)
+            else:
+                # ML path: AI engine fetches its own data internally
+                signal_data = self.ai.generate_signal(
+                    symbol=symbol,
+                    confidence_threshold=settings.AI_CONFIDENCE_THRESHOLD,
+                    max_stop_dollars=settings.MAX_STOP_LOSS_DOLLARS,
+                    min_rr=settings.MIN_RISK_REWARD_RATIO,
+                )
         except Exception as exc:
             logger.error("Signal generation failed for %s: %s", symbol, exc)
             return

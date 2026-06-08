@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--daily-target", type=float, default=1000.0, help="Daily profit target ($)")
     parser.add_argument("--daily-loss-limit", type=float, default=2000.0, help="Daily loss limit ($)")
     parser.add_argument("--train-split", type=float, default=0.4, help="Fraction used for training (default: 0.4)")
+    parser.add_argument("--strategy", default="orb", choices=["orb", "ml"], help="Strategy to backtest (default: orb)")
     return parser.parse_args()
 
 
@@ -213,6 +214,109 @@ def run_backtest(
     }
 
 
+def run_orb_backtest(
+    symbol: str,
+    df: pd.DataFrame,
+    args: argparse.Namespace,
+) -> dict:
+    """
+    Bar-by-bar ORB backtest. No training needed (rule-based).
+    Walks the full dataset, calls ORBStrategy.generate_signal on each rolling
+    slice, then simulates the trade outcome over the rest of that session.
+    Enforces: one trade per side per day, daily loss limit, daily profit target.
+    """
+    from backend.strategies.orb import ORBStrategy
+
+    strategy = ORBStrategy(config=None)
+    strategy.max_stop_dollars = args.max_stop
+
+    point_value_map = {"MES": 5.0, "MNQ": 2.0, "MGC": 10.0}
+    point_value = point_value_map.get(symbol.upper(), 5.0)
+
+    n = len(df)
+    trades = []
+    daily_pnl: dict = defaultdict(float)
+    equity = args.account
+    equity_curve = []
+
+    taken_today: dict = defaultdict(set)   # date -> {"long","short"} already traded
+    LOOKAHEAD = 78  # ~ rest of a session in 5m bars (6.5h = 78 bars)
+
+    print(f"\n  Simulating ORB across {n} bars ...")
+
+    for i in range(20, n - 1):
+        ts = df.index[i]
+        date_str = str(ts.date()) if hasattr(ts, "date") else str(i)
+
+        if daily_pnl[date_str] <= -args.daily_loss_limit:
+            continue
+        if daily_pnl[date_str] >= args.daily_target:
+            continue
+
+        sub = df.iloc[max(0, i - 120):i + 1]
+        signal = strategy.generate_signal(sub, symbol)
+        if signal is None:
+            continue
+
+        direction = signal["direction"]
+        if direction in taken_today[date_str]:
+            continue  # already took this side today
+
+        entry = signal["entry_price"]
+        stop = signal["stop_loss"]
+        target = signal["target_1"]
+        taken_today[date_str].add(direction)
+
+        # Simulate outcome over the remainder of the session
+        outcome = "timeout"
+        exit_price = float(df.iloc[min(i + LOOKAHEAD, n - 1)]["close"])
+        for j in range(1, LOOKAHEAD + 1):
+            idx = i + j
+            if idx >= n:
+                break
+            # stop if we cross into the next day
+            if hasattr(df.index[idx], "date") and df.index[idx].date() != ts.date():
+                exit_price = float(df.iloc[idx - 1]["close"])
+                break
+            fhigh = float(df.iloc[idx]["high"])
+            flow = float(df.iloc[idx]["low"])
+            if direction == "long":
+                if fhigh >= target:
+                    outcome, exit_price = "win", target; break
+                if flow <= stop:
+                    outcome, exit_price = "loss", stop; break
+            else:
+                if flow <= target:
+                    outcome, exit_price = "win", target; break
+                if fhigh >= stop:
+                    outcome, exit_price = "loss", stop; break
+
+        if direction == "long":
+            pnl = (exit_price - entry) * point_value
+        else:
+            pnl = (entry - exit_price) * point_value
+        pnl -= 2.0  # commission
+
+        equity += pnl
+        daily_pnl[date_str] += pnl
+
+        trades.append({
+            "date": date_str, "bar": i, "direction": direction,
+            "confidence": signal["confidence"], "entry": entry, "exit": exit_price,
+            "stop": stop, "target": target, "rr": signal["risk_reward_ratio"],
+            "outcome": outcome, "pnl": round(pnl, 2), "equity": round(equity, 2),
+        })
+        equity_curve.append({"date": date_str, "equity": equity})
+
+    return {
+        "symbol": symbol, "period": args.period, "bars_total": n,
+        "bars_trained": 0, "bars_tested": n,
+        "trades": trades, "daily_pnl": dict(daily_pnl),
+        "final_equity": equity, "starting_equity": args.account,
+        "equity_curve": equity_curve,
+    }
+
+
 def compute_stats(result: dict, account: float) -> dict:
     trades = result["trades"]
     if not trades:
@@ -299,19 +403,19 @@ def print_daily_table(daily_pnl: dict, daily_target: float, loss_limit: float):
 def main():
     args = parse_args()
 
-    print_header(f"AI Day Trading Backtest — {args.symbol}")
+    print_header(f"Tajari Backtest — {args.symbol} [{args.strategy.upper()}]")
+    print(f"  Strategy : {args.strategy.upper()}")
     print(f"  Account  : ${args.account:,.0f}")
     print(f"  Period   : {args.period} @ {args.interval}")
-    print(f"  AI conf  : >{args.threshold}")
+    if args.strategy == "ml":
+        print(f"  AI conf  : >{args.threshold}")
     print(f"  Max stop : ${args.max_stop:.0f}")
     print(f"  Daily tgt: ${args.daily_target:,.0f}")
     print(f"  Daily lim: ${args.daily_loss_limit:,.0f}")
 
     from backend.services.market_data import MarketDataService
-    from backend.services.ai_engine import AIEngine
 
     md = MarketDataService()
-    engine = AIEngine(confidence_threshold=args.threshold)
 
     print(f"\n  Downloading {args.symbol} data ...")
     df = md.get_historical(args.symbol, period=args.period, interval=args.interval)
@@ -323,7 +427,12 @@ def main():
     df = md.add_indicators(df)
     print(f"  Ready: {len(df)} bars with {df.shape[1]} columns")
 
-    result = run_backtest(args.symbol, df, engine, args)
+    if args.strategy == "orb":
+        result = run_orb_backtest(args.symbol, df, args)
+    else:
+        from backend.services.ai_engine import AIEngine
+        engine = AIEngine(confidence_threshold=args.threshold)
+        result = run_backtest(args.symbol, df, engine, args)
 
     if "error" in result:
         print(f"\n  Error: {result['error']}")

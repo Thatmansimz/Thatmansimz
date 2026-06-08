@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     AI_CONFIDENCE_THRESHOLD: float = 0.65
     MIN_RISK_REWARD_RATIO: float = 2.0
 
+    # Active strategy: "orb" | "momentum" | "ml"
+    STRATEGY: str = "orb"
+
     # Risk management
     MAX_STOP_LOSS_DOLLARS: float = 250.0
     DAILY_PROFIT_TARGET_DOLLARS: float = 1000.0
