@@ -124,7 +124,7 @@ export default function Dashboard() {
   const [dailyHistory, setDailyHistory] = useState<{ date: string; pnl: number }[]>([]);
   const [trading,      setTrading]      = useState(false);
   const [closing,      setClosing]      = useState(false);
-  const [now,          setNow]          = useState(new Date());
+  const [now,          setNow]          = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -150,6 +150,7 @@ export default function Dashboard() {
   }, [load]);
 
   useEffect(() => {
+    setNow(new Date());
     const iv = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(iv);
   }, []);
@@ -220,9 +221,9 @@ export default function Dashboard() {
           {/* Live clock */}
           <div className="hidden md:block font-mono-hud text-xs text-center" style={{ color: "#00d4ff88" }}>
             <div className="font-bold text-sm" style={{ color: "#00d4ff" }}>
-              {now.toLocaleTimeString("en-US", { hour12: false })}
+              {now ? now.toLocaleTimeString("en-US", { hour12: false }) : "--:--:--"}
             </div>
-            <div>{now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+            <div>{now ? now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "---"}</div>
           </div>
 
           {/* Status pills */}
