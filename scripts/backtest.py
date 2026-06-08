@@ -41,11 +41,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--daily-loss-limit", type=float, default=2000.0, help="Daily loss limit ($)")
     parser.add_argument("--train-split", type=float, default=0.4, help="Fraction used for training (default: 0.4)")
     parser.add_argument("--strategy", default="orb", choices=["orb", "ml"], help="Strategy to backtest (default: orb)")
-    parser.add_argument("--entry-mode", default="icc", choices=["icc", "breakout"], help="ORB entry model (default: icc)")
+    parser.add_argument("--entry-mode", default="breakout", choices=["icc", "breakout"], help="ORB entry model (default: breakout)")
     parser.add_argument("--no-trend", action="store_true", help="Disable the ADX/EMA/VWAP regime filter")
     parser.add_argument("--no-breakeven", action="store_true", help="Disable move-stop-to-breakeven at +1R")
     parser.add_argument("--no-news", action="store_true", help="Disable the red-folder news blackout filter")
-    parser.add_argument("--target-r", type=float, default=2.0, help="Target as a multiple of risk (default: 2.0)")
+    parser.add_argument("--target-r", type=float, default=1.0, help="Target as a multiple of risk (default: 1.0)")
+    # ── Frequency levers ──
+    parser.add_argument("--max-trades-day", type=int, default=2, help="Max trades per day (default: 2)")
+    parser.add_argument("--allow-reentry", action="store_true", help="Allow multiple same-side breakouts per day")
+    parser.add_argument("--min-gap", type=int, default=1, help="Min bars between entries (default: 1)")
+    parser.add_argument("--or-minutes", type=int, default=15, help="Opening range length in minutes (default: 15)")
+    parser.add_argument("--cutoff", default="12:00", help="Latest entry time ET, HH:MM (default: 12:00)")
     return parser.parse_args()
 
 
@@ -239,6 +245,14 @@ def run_orb_backtest(
     # The min-R:R validation gate must not exceed the target we're testing,
     # otherwise every signal is rejected for "insufficient reward".
     strategy.min_rr = min(strategy.min_rr, args.target_r)
+    # Frequency knobs
+    strategy.or_minutes = args.or_minutes
+    try:
+        _h, _m = args.cutoff.split(":")
+        from datetime import time as _dtime
+        strategy.entry_cutoff = _dtime(int(_h), int(_m))
+    except Exception:
+        pass
     if args.no_trend:
         strategy.require_trend = False
         strategy.use_ema_filter = False
@@ -259,6 +273,9 @@ def run_orb_backtest(
     equity_curve = []
 
     taken_today: dict = defaultdict(set)   # date -> {"long","short"} already traded
+    trades_today: dict = defaultdict(int)  # date -> count of trades taken
+    last_entry_bar = -10 ** 9
+    busy_until = -1                          # no new entry while a trade is open
     LOOKAHEAD = 78  # ~ rest of a session in 5m bars (6.5h = 78 bars)
 
     print(f"\n  Simulating ORB across {n} bars ...")
@@ -271,6 +288,12 @@ def run_orb_backtest(
             continue
         if daily_pnl[date_str] >= args.daily_target:
             continue
+        if i <= busy_until:
+            continue  # a position is still open — no overlapping trades
+        if trades_today[date_str] >= args.max_trades_day:
+            continue
+        if i - last_entry_bar < args.min_gap:
+            continue
 
         sub = df.iloc[max(0, i - 120):i + 1]
         signal = strategy.generate_signal(sub, symbol)
@@ -279,8 +302,9 @@ def run_orb_backtest(
         n_signals += 1
 
         direction = signal["direction"]
-        if direction in taken_today[date_str]:
-            continue  # already took this side today
+        # Per-side cap unless re-entry is explicitly allowed
+        if not args.allow_reentry and direction in taken_today[date_str]:
+            continue
 
         entry = signal["entry_price"]
         stop = signal["stop_loss"]
@@ -293,14 +317,17 @@ def run_orb_backtest(
 
         # Simulate outcome over the remainder of the session
         outcome = "timeout"
-        exit_price = float(df.iloc[min(i + LOOKAHEAD, n - 1)]["close"])
+        exit_bar = min(i + LOOKAHEAD, n - 1)
+        exit_price = float(df.iloc[exit_bar]["close"])
         for j in range(1, LOOKAHEAD + 1):
             idx = i + j
             if idx >= n:
+                exit_bar = n - 1
                 break
             # stop if we cross into the next day
             if hasattr(df.index[idx], "date") and df.index[idx].date() != ts.date():
                 exit_price = float(df.iloc[idx - 1]["close"])
+                exit_bar = idx - 1
                 break
             fhigh = float(df.iloc[idx]["high"])
             flow = float(df.iloc[idx]["low"])
@@ -310,19 +337,19 @@ def run_orb_backtest(
                     stop = entry
                     moved_to_be = True
                 if fhigh >= target:
-                    outcome, exit_price = "win", target; break
+                    outcome, exit_price, exit_bar = "win", target, idx; break
                 if flow <= stop:
                     outcome = "breakeven" if moved_to_be else "loss"
-                    exit_price = stop; break
+                    exit_price, exit_bar = stop, idx; break
             else:
                 if use_breakeven and not moved_to_be and flow <= be_level:
                     stop = entry
                     moved_to_be = True
                 if flow <= target:
-                    outcome, exit_price = "win", target; break
+                    outcome, exit_price, exit_bar = "win", target, idx; break
                 if fhigh >= stop:
                     outcome = "breakeven" if moved_to_be else "loss"
-                    exit_price = stop; break
+                    exit_price, exit_bar = stop, idx; break
 
         if direction == "long":
             pnl = (exit_price - entry) * point_value
@@ -332,6 +359,9 @@ def run_orb_backtest(
 
         equity += pnl
         daily_pnl[date_str] += pnl
+        trades_today[date_str] += 1
+        last_entry_bar = i
+        busy_until = exit_bar
 
         trades.append({
             "date": date_str, "bar": i, "direction": direction,
