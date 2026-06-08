@@ -1,6 +1,6 @@
-# AI Day Trading Platform
+# Tajari AI Trading
 
-An autonomous AI trading platform that scans markets, generates high-probability trade setups using machine learning, and executes orders automatically during market hours. Built for prop firm evaluations and funded accounts.
+Autonomous AI-powered day trading platform — scans markets, generates high-probability setups using machine learning, and executes orders automatically during market hours. Built for prop firm evaluations and funded accounts.
 
 ---
 

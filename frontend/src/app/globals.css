@@ -2,35 +2,206 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Fonts ── */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ── Root palette ── */
+:root {
+  --cyan:   #00d4ff;
+  --cyan2:  #0ea5e9;
+  --green:  #00ff88;
+  --red:    #ff3366;
+  --amber:  #ffaa00;
+  --purple: #7c3aed;
+  --bg:     #050913;
+  --surface:#0d1525;
+  --border: #1a2d4a;
+}
+
+* { box-sizing: border-box; }
+
 body {
-  background-color: #0a0e1a;
-  color: #e2e8f0;
-  font-family: 'Inter', 'SF Mono', monospace;
+  background-color: var(--bg);
+  color: #cbd5e1;
+  font-family: 'Inter', system-ui, sans-serif;
+  overflow-x: hidden;
 }
 
-.card {
-  @apply bg-dark-800 border border-slate-700/50 rounded-xl p-4;
+/* ── Animated dot-grid background ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle, #1a2d4a 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.45;
+  pointer-events: none;
 }
 
-.stat-value {
-  @apply text-2xl font-bold tracking-tight;
+/* ── Scanning sweep line ── */
+@keyframes scan {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 0.6; }
+  90%  { opacity: 0.6; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+.scan-line {
+  position: fixed;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  animation: scan 6s linear infinite;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
 }
 
-.positive { color: #00ff88; }
-.negative { color: #ff3366; }
-.neutral { color: #94a3b8; }
-
-.confidence-bar {
-  height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(90deg, #ff3366, #ffaa00, #00ff88);
+/* ── Glow pulse ── */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px var(--cyan), 0 0 24px #00d4ff44; }
+  50%       { box-shadow: 0 0 16px var(--cyan), 0 0 48px #00d4ff66; }
+}
+@keyframes green-pulse {
+  0%, 100% { box-shadow: 0 0 6px var(--green); }
+  50%       { box-shadow: 0 0 18px var(--green), 0 0 32px #00ff8866; }
+}
+@keyframes red-pulse {
+  0%, 100% { box-shadow: 0 0 6px var(--red); }
+  50%       { box-shadow: 0 0 18px var(--red), 0 0 32px #ff336666; }
 }
 
-@keyframes pulse-green {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(0, 255, 136, 0); }
+/* ── Shimmer border ── */
+@keyframes border-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.shimmer-border {
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+.shimmer-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #00d4ff55, #7c3aed55, #00ff8855, #00d4ff55);
+  background-size: 300% 300%;
+  animation: border-shimmer 4s ease infinite;
+  z-index: -1;
 }
 
-.live-indicator {
-  animation: pulse-green 2s infinite;
+/* ── Ticker tape ── */
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
 }
+.ticker-wrap {
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ticker-inner {
+  display: inline-block;
+  animation: ticker 24s linear infinite;
+}
+
+/* ── Floating badge ── */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-4px); }
+}
+
+/* ── Text styles ── */
+.font-display  { font-family: 'Orbitron', monospace; }
+.font-mono-hud { font-family: 'JetBrains Mono', monospace; }
+
+.text-glow-cyan  { text-shadow: 0 0 12px var(--cyan),  0 0 32px #00d4ff55; }
+.text-glow-green { text-shadow: 0 0 10px var(--green), 0 0 24px #00ff8855; }
+.text-glow-red   { text-shadow: 0 0 10px var(--red),   0 0 24px #ff336655; }
+
+/* ── Glass card ── */
+.glass {
+  background: linear-gradient(135deg, #0d1525ee, #0a1020dd);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.glass-bright {
+  background: linear-gradient(135deg, #111d35ee, #0d1830dd);
+  backdrop-filter: blur(16px);
+  border: 1px solid #2a4060;
+  border-radius: 16px;
+}
+
+/* ── Neon button ── */
+.btn-cyan {
+  background: linear-gradient(135deg, #00d4ff22, #0ea5e933);
+  border: 1px solid var(--cyan2);
+  color: var(--cyan);
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  transition: all 0.2s ease;
+}
+.btn-cyan:hover {
+  background: linear-gradient(135deg, #00d4ff44, #0ea5e955);
+  box-shadow: 0 0 20px #00d4ff44;
+}
+.btn-red {
+  background: linear-gradient(135deg, #ff336622, #ff336633);
+  border: 1px solid var(--red);
+  color: var(--red);
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  transition: all 0.2s ease;
+}
+.btn-red:hover {
+  background: linear-gradient(135deg, #ff336644, #ff336666);
+  box-shadow: 0 0 20px #ff336644;
+}
+.btn-green {
+  background: linear-gradient(135deg, #00ff8822, #00ff8833);
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  transition: all 0.2s ease;
+}
+.btn-green:hover {
+  background: linear-gradient(135deg, #00ff8844, #00ff8866);
+  box-shadow: 0 0 20px #00ff8844;
+}
+
+/* ── Status dot ── */
+.dot-live {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: green-pulse 2s infinite;
+}
+.dot-dead {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #334155;
+}
+.dot-warn {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+/* ── Table rows ── */
+.tr-hover:hover {
+  background: linear-gradient(90deg, #00d4ff08, transparent);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1a2d4a; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--cyan2); }
