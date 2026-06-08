@@ -269,6 +269,55 @@ class ORBStrategy(BaseStrategy):
         return None
 
     # ──────────────────────────────────────────────────────────────────────
+    # Diagnostics — find out WHERE the pipeline drops everything
+    # ──────────────────────────────────────────────────────────────────────
+    def diagnose(self, df: pd.DataFrame, symbol: str) -> dict:
+        from collections import defaultdict
+
+        et_full = self._et_times(df.index)
+        info = {
+            "index_tz": str(getattr(df.index, "tz", None)),
+            "n_bars": len(df),
+            "first_ts_et": str(et_full[0]),
+            "mid_ts_et": str(et_full[len(et_full) // 2]),
+            "last_ts_et": str(et_full[-1]),
+        }
+
+        days = defaultdict(list)
+        for i, ts in enumerate(et_full):
+            days[ts.date()].append(i)
+
+        or_end = self._minute_of_day(self.session_open) + self.or_minutes
+        cutoff = self._minute_of_day(self.entry_cutoff)
+
+        days_with_or = 0
+        bars_in_window = 0
+        raw_breakouts = 0
+        for _, idxs in days.items():
+            day_df = df.iloc[idxs]
+            et = self._et_times(day_df.index)
+            rng = self._opening_range(day_df, et)
+            if not rng:
+                continue
+            days_with_or += 1
+            or_high, or_low = rng
+            for k, ts in enumerate(et):
+                m = self._minute_of_day(ts)
+                if or_end <= m <= cutoff:
+                    bars_in_window += 1
+                    c = float(day_df.iloc[k]["close"])
+                    if c > or_high or c < or_low:
+                        raw_breakouts += 1
+
+        info.update(
+            n_days=len(days),
+            days_with_opening_range=days_with_or,
+            bars_in_entry_window=bars_in_window,
+            raw_breakouts_in_window=raw_breakouts,
+        )
+        return info
+
+    # ──────────────────────────────────────────────────────────────────────
     # Entry models — return (direction, stop_reference) or None
     # ──────────────────────────────────────────────────────────────────────
     def _breakout_setup(self, post: pd.DataFrame, or_high: float, or_low: float):

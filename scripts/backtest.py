@@ -340,6 +340,17 @@ def run_orb_backtest(
 
     print(f"  Signals fired: {n_signals} | Trades taken: {len(trades)}")
 
+    if n_signals == 0:
+        print_header("DIAGNOSTIC — why zero signals?")
+        diag = strategy.diagnose(df, symbol)
+        for k, v in diag.items():
+            print(f"  {k:<26}: {v}")
+        print()
+        print("  Read this as: index_tz tells us the data timezone. If")
+        print("  bars_in_entry_window is 0, the 09:45-12:00 ET window isn't")
+        print("  matching the data (timezone issue). If raw_breakouts_in_window")
+        print("  is 0, the opening range never gets crossed. Either way we fix it.")
+
     return {
         "symbol": symbol, "period": args.period, "bars_total": n,
         "bars_trained": 0, "bars_tested": n,
@@ -473,6 +484,11 @@ def main():
         sys.exit(1)
 
     stats = compute_stats(result, args.account)
+
+    if "error" in stats:
+        print_header("Backtest Results")
+        print(f"  {stats['error']} — see the DIAGNOSTIC block above.")
+        sys.exit(0)
 
     print_header("Backtest Results")
     print(f"  Total trades   : {stats['total_trades']}")
