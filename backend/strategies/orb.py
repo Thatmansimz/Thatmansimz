@@ -48,10 +48,11 @@ class ORBStrategy(BaseStrategy):
 
     def __init__(self, config=None):
         super().__init__(config)
-        # ── Opening range ──
-        self.or_minutes = 15
+        # ── Opening range ── (validated Config 3: 5-min OR beat 15-min on both
+        # MES PF 1.36 and MNQ PF 1.86 — tighter range = earlier, better entries)
+        self.or_minutes = 5
         self.session_open = dtime(9, 30)
-        self.entry_cutoff = dtime(12, 0)      # no new entries after noon ET
+        self.entry_cutoff = dtime(14, 0)      # entry window 09:35-14:00 ET
 
         # ── Entry model ──
         # Validated config (60d MES+MNQ): plain breakout @ 1R beat ICC and the

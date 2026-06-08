@@ -50,8 +50,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-trades-day", type=int, default=2, help="Max trades per day (default: 2)")
     parser.add_argument("--allow-reentry", action="store_true", help="Allow multiple same-side breakouts per day")
     parser.add_argument("--min-gap", type=int, default=1, help="Min bars between entries (default: 1)")
-    parser.add_argument("--or-minutes", type=int, default=15, help="Opening range length in minutes (default: 15)")
-    parser.add_argument("--cutoff", default="12:00", help="Latest entry time ET, HH:MM (default: 12:00)")
+    parser.add_argument("--or-minutes", type=int, default=5, help="Opening range length in minutes (default: 5)")
+    parser.add_argument("--cutoff", default="14:00", help="Latest entry time ET, HH:MM (default: 14:00)")
+    # ── Position sizing ──
+    parser.add_argument("--contracts", type=int, default=1, help="Fixed contracts per trade (default: 1)")
+    parser.add_argument("--size-to-budget", action="store_true", help="Auto-size contracts to use the full risk budget per trade")
+    parser.add_argument("--risk-per-trade", type=float, default=None, help="$ risk budget per trade for sizing (default: --max-stop)")
     return parser.parse_args()
 
 
@@ -311,6 +315,14 @@ def run_orb_backtest(
         target = signal["target_1"]
         taken_today[date_str].add(direction)
 
+        # Position sizing — how many contracts for this trade
+        per_contract_risk = abs(entry - stop) * point_value
+        if args.size_to_budget and per_contract_risk > 0:
+            budget = args.risk_per_trade if args.risk_per_trade else args.max_stop
+            contracts = max(1, int(budget / per_contract_risk))
+        else:
+            contracts = max(1, args.contracts)
+
         risk = abs(entry - stop)
         be_level = entry + risk if direction == "long" else entry - risk  # +1R
         moved_to_be = False
@@ -352,10 +364,10 @@ def run_orb_backtest(
                     exit_price, exit_bar = stop, idx; break
 
         if direction == "long":
-            pnl = (exit_price - entry) * point_value
+            pnl = (exit_price - entry) * point_value * contracts
         else:
-            pnl = (entry - exit_price) * point_value
-        pnl -= 2.0  # commission
+            pnl = (entry - exit_price) * point_value * contracts
+        pnl -= 2.0 * contracts  # commission scales with size
 
         equity += pnl
         daily_pnl[date_str] += pnl
@@ -367,11 +379,16 @@ def run_orb_backtest(
             "date": date_str, "bar": i, "direction": direction,
             "confidence": signal["confidence"], "entry": entry, "exit": exit_price,
             "stop": stop, "target": target, "rr": signal["risk_reward_ratio"],
+            "contracts": contracts,
             "outcome": outcome, "pnl": round(pnl, 2), "equity": round(equity, 2),
         })
         equity_curve.append({"date": date_str, "equity": equity})
 
-    print(f"  Signals fired: {n_signals} | Trades taken: {len(trades)}")
+    if trades:
+        avg_contracts = sum(t["contracts"] for t in trades) / len(trades)
+        print(f"  Signals fired: {n_signals} | Trades taken: {len(trades)} | Avg contracts: {avg_contracts:.1f}")
+    else:
+        print(f"  Signals fired: {n_signals} | Trades taken: {len(trades)}")
 
     if n_signals == 0:
         print_header("DIAGNOSTIC — why zero signals?")
