@@ -29,6 +29,8 @@ type Status = {
   ai_threshold: number;
   sessions?: SessionInfo[];
   now_et?: string;
+  orb_window_active?: boolean;
+  orb_opens_in_min?: number | null;
 };
 type Stats = { pnl: number; trades_count: number; wins: number; losses: number; win_rate: number };
 type Trade = {
@@ -129,6 +131,49 @@ function Ticker() {
 }
 
 /* ── Global session clock bar ── */
+/* ── Engine state pill: DISARMED / ARMED / LIVE ── */
+function fmtMins(m?: number | null): string {
+  if (m == null || m < 0) return "";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  return r ? `${h}h ${r}m` : `${h}h`;
+}
+
+function EngineStatePill({ status }: { status?: Status | null }) {
+  // DISARMED  — trading off (engine watching only, no trades possible)
+  // LIVE      — trading on AND inside the ORB window (9:35–14:00 ET): taking trades
+  // ARMED     — trading on but outside the window: watching, waiting for NY open
+  let label = "DISARMED", color = "#475569", pulse = false, title = "Trading is off. Click START TRADING to arm the engine.";
+  if (status?.trading_enabled) {
+    if (status?.orb_window_active) {
+      label = "LIVE"; color = "#00ff88"; pulse = true;
+      title = "ORB window is open (9:35–14:00 ET) — the engine is actively taking paper trades.";
+    } else {
+      const eta = fmtMins(status?.orb_opens_in_min);
+      label = eta ? `ARMED · NY IN ${eta}` : "ARMED";
+      color = "#ffaa00";
+      title = "Engine armed and watching. ORB only trades the NY session (9:35–14:00 ET) — idle through Asia/London by design.";
+    }
+  }
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-1.5 rounded-full glass text-xs font-mono-hud"
+      title={title}
+      style={{ border: `1px solid ${color}44` }}
+    >
+      <span
+        style={{
+          width: 7, height: 7, borderRadius: "50%", background: color,
+          boxShadow: `0 0 8px ${color}`,
+          animation: pulse ? "green-pulse 2s infinite" : "none",
+        }}
+      />
+      <span style={{ color, fontWeight: 700 }}>{label}</span>
+    </div>
+  );
+}
+
 function SessionBar({ sessions, nowEt }: { sessions?: SessionInfo[]; nowEt?: string }) {
   const fallback: SessionInfo[] = [
     { name: "ASIA", label: "Asia · Tokyo", hours: "8:00 PM – 4:00 AM ET", open: false, kill_zone: false },
@@ -566,6 +611,7 @@ export default function Dashboard() {
                 AI {status?.scheduler_running ? "ACTIVE" : "IDLE"}
               </span>
             </div>
+            <EngineStatePill status={status} />
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full glass text-[10px] font-mono-hud" style={{ color: "#7c3aed88" }}>
               <span style={{ color: "#7c3aed" }}>◆</span>
               {(status?.broker ?? "PAPER").toUpperCase()}
@@ -613,12 +659,22 @@ export default function Dashboard() {
                 ◆ Instrument Cluster
               </span>
               {status?.trading_enabled && (
-                <span
-                  className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
-                  style={{ background: "#00ff8822", border: "1px solid #00ff8844", color: "#00ff88", animation: "green-pulse 2s infinite" }}
-                >
-                  LIVE
-                </span>
+                status?.orb_window_active ? (
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
+                    style={{ background: "#00ff8822", border: "1px solid #00ff8844", color: "#00ff88", animation: "green-pulse 2s infinite" }}
+                  >
+                    LIVE · NY SESSION
+                  </span>
+                ) : (
+                  <span
+                    className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
+                    style={{ background: "#ffaa0018", border: "1px solid #ffaa0044", color: "#ffaa00" }}
+                    title="Engine armed — ORB only trades the NY session (9:35–14:00 ET). Watching, not trading."
+                  >
+                    ARMED · WAITING FOR NY OPEN
+                  </span>
+                )
               )}
             </div>
             <div className="hidden sm:flex items-center gap-4 text-[10px] font-mono-hud" style={{ color: "#475569" }}>
