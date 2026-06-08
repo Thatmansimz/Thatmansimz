@@ -437,6 +437,40 @@ async def trade_insights(db: Session = Depends(get_db)):
     }
 
 
+# ── Paper Forward-Test ──────────────────────────────────────────────────────
+
+@app.post("/api/forward-test/run")
+async def forward_test_run(period: str = "30d", db: Session = Depends(get_db)):
+    """
+    Replay the validated ORB edge over recent data and record the results as
+    paper trades, so the Insights panel / charts fill immediately. Stage 1 of
+    the plan — zero money at risk. Requires market-data access on the host.
+    """
+    try:
+        from scripts.forward_test import run_forward_test
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Forward-test module unavailable: {exc}")
+
+    symbols = [s for s in settings.SYMBOLS if s.upper() in ("MNQ", "NQ", "MES", "ES")] or ["MNQ", "NQ"]
+    try:
+        summary = run_forward_test(
+            db, symbols, period=period,
+            max_stop=settings.MAX_STOP_LOSS_DOLLARS, reset=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Forward-test failed: {exc}")
+    return {"ok": True, **summary}
+
+
+@app.post("/api/forward-test/reset")
+async def forward_test_reset(db: Session = Depends(get_db)):
+    """Clear paper forward-test trades (leaves any real trades untouched)."""
+    from scripts.forward_test import reset_forward_trades, rebuild_daily_stats
+    cleared = reset_forward_trades(db)
+    rebuild_daily_stats(db, settings.PROP_FIRM_ACCOUNT_SIZE)
+    return {"ok": True, "cleared": cleared}
+
+
 # ── Trading Control ───────────────────────────────────────────────────────────
 
 @app.post("/api/trading/start")

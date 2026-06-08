@@ -461,12 +461,19 @@ def run_orb_backtest(
         last_entry_bar = i
         busy_until = exit_bar
 
+        def _ts(idx):
+            try:
+                return df.index[idx].to_pydatetime()
+            except Exception:
+                return None
+
         trades.append({
             "date": date_str, "bar": i, "direction": direction,
             "confidence": signal["confidence"], "entry": entry, "exit": exit_price,
             "stop": stop, "target": target, "rr": signal["risk_reward_ratio"],
             "contracts": contracts,
             "outcome": outcome, "pnl": round(pnl, 2), "equity": round(equity, 2),
+            "entry_time": _ts(i), "exit_time": _ts(exit_bar),
         })
         equity_curve.append({"date": date_str, "equity": equity})
 

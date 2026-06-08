@@ -302,15 +302,23 @@ function EdgeRow({ name, b }: { name: string; b: Bucket }) {
   );
 }
 
-function InsightsPanel({ insights }: { insights: Insights | null }) {
+function InsightsPanel({ insights, onRun, onReset, running }: {
+  insights: Insights | null; onRun: () => void; onReset: () => void; running: boolean;
+}) {
   if (!insights || insights.total_trades === 0) {
     return (
       <div className="glass-bright rounded-2xl p-5">
         <SectionHeader title="Trade Insights" sub="strengths & weaknesses · auto-learned" />
-        <div className="py-10 flex flex-col items-center gap-2 text-center">
+        <div className="py-10 flex flex-col items-center gap-3 text-center">
           <div className="text-3xl" style={{ color: "#1a2d4a" }}>◍</div>
           <p className="text-xs font-mono-hud tracking-wide max-w-md" style={{ color: "#475569" }}>
             {insights?.note ?? "Insights unlock as trades close — your best direction, session, and instrument will surface here automatically."}
+          </p>
+          <button onClick={onRun} disabled={running} className="btn-cyan px-5 py-2.5 rounded-lg disabled:opacity-50 mt-1">
+            {running ? "RUNNING FORWARD-TEST..." : "▶ RUN PAPER FORWARD-TEST"}
+          </button>
+          <p className="text-[10px] font-mono-hud max-w-sm" style={{ color: "#334155" }}>
+            Replays the validated ORB edge over the last 30 days as paper trades — zero risk, fills this panel instantly.
           </p>
         </div>
       </div>
@@ -320,7 +328,18 @@ function InsightsPanel({ insights }: { insights: Insights | null }) {
   const sessEntries = Object.entries(insights.by_session).filter(([k]) => k !== "Unknown");
   return (
     <div className="glass-bright rounded-2xl p-5">
-      <SectionHeader title="Trade Insights" sub={`${insights.total_trades} trades analyzed · expectancy $${insights.overall.expectancy.toFixed(0)}/trade`} />
+      <div className="flex items-start justify-between">
+        <SectionHeader title="Trade Insights" sub={`${insights.total_trades} trades analyzed · expectancy $${insights.overall.expectancy.toFixed(0)}/trade`} />
+        <div className="flex items-center gap-2">
+          <button onClick={onRun} disabled={running} className="btn-cyan px-3 py-1.5 rounded-lg text-[10px] disabled:opacity-50">
+            {running ? "RUNNING..." : "↻ RE-RUN"}
+          </button>
+          <button onClick={onReset} disabled={running} className="px-3 py-1.5 rounded-lg text-[10px] font-mono-hud disabled:opacity-50"
+            style={{ background: "#0a1525", border: "1px solid #1a2d4a", color: "#475569" }}>
+            CLEAR
+          </button>
+        </div>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Strengths */}
         <div>
@@ -396,6 +415,7 @@ export default function Dashboard() {
   const [dailyHistory, setDailyHistory] = useState<{ date: string; pnl: number }[]>([]);
   const [trading,      setTrading]      = useState(false);
   const [closing,      setClosing]      = useState(false);
+  const [fwRunning,    setFwRunning]    = useState(false);
   const [now,          setNow]          = useState<Date | null>(null);
 
   const load = useCallback(async () => {
@@ -453,6 +473,29 @@ export default function Dashboard() {
       await fetch(`${API}/api/settings/max-stop?value=${v}`, { method: "POST" });
       await load();
     } catch (_) {}
+  }
+
+  async function runForwardTest() {
+    setFwRunning(true);
+    try {
+      const res = await fetch(`${API}/api/forward-test/run?period=30d`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Forward-test failed: ${err.detail ?? "see backend logs (market data must be reachable)"}`);
+      }
+      await load();
+    } catch (e) {
+      alert("Forward-test request failed — is the backend running with market-data access?");
+    } finally { setFwRunning(false); }
+  }
+
+  async function resetForwardTest() {
+    if (!confirm("Clear all paper forward-test trades?")) return;
+    setFwRunning(true);
+    try {
+      await fetch(`${API}/api/forward-test/reset`, { method: "POST" });
+      await load();
+    } finally { setFwRunning(false); }
   }
 
   const dailyPnl  = todayStats?.pnl ?? 0;
@@ -766,7 +809,7 @@ export default function Dashboard() {
         </div>
 
         {/* ── Trade Insights ── */}
-        <InsightsPanel insights={insights} />
+        <InsightsPanel insights={insights} onRun={runForwardTest} onReset={resetForwardTest} running={fwRunning} />
 
         {/* ── Open Positions ── */}
         <div className="glass-bright rounded-2xl p-5">
