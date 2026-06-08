@@ -41,6 +41,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--daily-loss-limit", type=float, default=2000.0, help="Daily loss limit ($)")
     parser.add_argument("--train-split", type=float, default=0.4, help="Fraction used for training (default: 0.4)")
     parser.add_argument("--strategy", default="orb", choices=["orb", "ml"], help="Strategy to backtest (default: orb)")
+    parser.add_argument("--entry-mode", default="icc", choices=["icc", "breakout"], help="ORB entry model (default: icc)")
+    parser.add_argument("--no-trend", action="store_true", help="Disable the ADX/EMA/VWAP regime filter")
+    parser.add_argument("--no-breakeven", action="store_true", help="Disable move-stop-to-breakeven at +1R")
     return parser.parse_args()
 
 
@@ -229,6 +232,12 @@ def run_orb_backtest(
 
     strategy = ORBStrategy(config=None)
     strategy.max_stop_dollars = args.max_stop
+    strategy.entry_mode = args.entry_mode
+    if args.no_trend:
+        strategy.require_trend = False
+        strategy.use_ema_filter = False
+        strategy.use_vwap_filter = False
+    use_breakeven = not args.no_breakeven
 
     point_value_map = {"MES": 5.0, "MNQ": 2.0, "MGC": 10.0}
     point_value = point_value_map.get(symbol.upper(), 5.0)
@@ -267,6 +276,10 @@ def run_orb_backtest(
         target = signal["target_1"]
         taken_today[date_str].add(direction)
 
+        risk = abs(entry - stop)
+        be_level = entry + risk if direction == "long" else entry - risk  # +1R
+        moved_to_be = False
+
         # Simulate outcome over the remainder of the session
         outcome = "timeout"
         exit_price = float(df.iloc[min(i + LOOKAHEAD, n - 1)]["close"])
@@ -281,15 +294,24 @@ def run_orb_backtest(
             fhigh = float(df.iloc[idx]["high"])
             flow = float(df.iloc[idx]["low"])
             if direction == "long":
+                # Move stop to breakeven once +1R is reached
+                if use_breakeven and not moved_to_be and fhigh >= be_level:
+                    stop = entry
+                    moved_to_be = True
                 if fhigh >= target:
                     outcome, exit_price = "win", target; break
                 if flow <= stop:
-                    outcome, exit_price = "loss", stop; break
+                    outcome = "breakeven" if moved_to_be else "loss"
+                    exit_price = stop; break
             else:
+                if use_breakeven and not moved_to_be and flow <= be_level:
+                    stop = entry
+                    moved_to_be = True
                 if flow <= target:
                     outcome, exit_price = "win", target; break
                 if fhigh >= stop:
-                    outcome, exit_price = "loss", stop; break
+                    outcome = "breakeven" if moved_to_be else "loss"
+                    exit_price = stop; break
 
         if direction == "long":
             pnl = (exit_price - entry) * point_value
@@ -329,6 +351,7 @@ def compute_stats(result: dict, account: float) -> dict:
     wins = [t for t in trades if t["outcome"] == "win"]
     losses = [t for t in trades if t["outcome"] == "loss"]
     timeouts = [t for t in trades if t["outcome"] == "timeout"]
+    breakevens = [t for t in trades if t["outcome"] == "breakeven"]
 
     total_pnl = sum(t["pnl"] for t in trades)
     gross_wins = sum(t["pnl"] for t in wins) if wins else 0
@@ -365,6 +388,7 @@ def compute_stats(result: dict, account: float) -> dict:
         "wins": len(wins),
         "losses": len(losses),
         "timeouts": len(timeouts),
+        "breakevens": len(breakevens),
         "win_rate_pct": round(len(wins) / len(trades) * 100, 1),
         "total_pnl": round(total_pnl, 2),
         "gross_wins": round(gross_wins, 2),
@@ -444,6 +468,7 @@ def main():
     print(f"  Total trades   : {stats['total_trades']}")
     print(f"  Wins           : {stats['wins']}")
     print(f"  Losses         : {stats['losses']}")
+    print(f"  Breakevens     : {stats.get('breakevens', 0)}")
     print(f"  Timeouts       : {stats['timeouts']}")
     print(f"  Win rate       : {stats['win_rate_pct']:.1f}%")
     print_separator()

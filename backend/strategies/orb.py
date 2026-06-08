@@ -1,23 +1,26 @@
 """
-Opening Range Breakout (ORB) Strategy
-=====================================
+Opening Range Breakout (ORB) + ICC Continuation Strategy
+========================================================
 
-The most-validated intraday edge in the public literature (cf. Zarattini &
-Aziz, 2023). The logic is intentionally mechanical and objective:
+Two entry models, selectable via `entry_mode`:
 
-  1. Define the OPENING RANGE — the high and low of the first N minutes after
-     the 09:30 ET cash open (default 15 minutes).
-  2. Wait for price to CLOSE beyond that range inside the entry window.
-       • close > OR high  → LONG breakout
-       • close < OR low   → SHORT breakout
-  3. Confirm with VOLUME (relative volume) and optional VWAP alignment.
-  4. Stop goes on the opposite side of the range, but is HARD-CAPPED so the
-     dollar risk never exceeds MAX_STOP_LOSS_DOLLARS ($250 default).
-  5. Target is a fixed R-multiple of the risk (default 2R) so every trade is
-     at least 2:1 reward:risk by construction.
+  • "breakout"  — classic: enter when a bar CLOSES beyond the opening range.
+                  Simple, but prone to fakeouts (low win rate on its own).
 
-This module is used both live (scheduler calls generate_signal on a rolling
-DataFrame) and in the backtester (same code path, bar by bar).
+  • "icc"       — Indication / Correction / Continuation (default):
+                  1. INDICATION  : price breaks the opening range (shows intent)
+                  2. CORRECTION  : price pulls back but HOLDS the broken level
+                  3. CONTINUATION: we enter only when price resumes in the
+                     breakout direction, taking out the pullback's high/low.
+                  The pullback filters fakeouts and gives a tighter stop
+                  (below the correction low) → higher win rate, better R:R.
+
+Both modes share:
+  • A REGIME FILTER (ADX trending + EMA/VWAP alignment) so we only trade when
+    the market is actually moving, not chopping.
+  • A hard $250 risk cap and a fixed R-multiple target (≥ 2:1 by construction).
+
+Used identically live (scheduler) and in the backtester.
 """
 from __future__ import annotations
 
@@ -34,32 +37,37 @@ logger = logging.getLogger(__name__)
 
 ET = pytz.timezone("America/New_York")
 
-# Futures point values ($ per 1.00 point move, per contract)
-POINT_VALUES = {
-    "MES": 5.0,
-    "MNQ": 2.0,
-    "MGC": 10.0,
-}
+POINT_VALUES = {"MES": 5.0, "MNQ": 2.0, "MGC": 10.0}
 
 
 class ORBStrategy(BaseStrategy):
-    """Opening Range Breakout with volume + VWAP confluence and a hard risk cap."""
+    """Opening Range Breakout with ICC continuation entries and a regime filter."""
 
     name = "orb"
-    description = "Opening Range Breakout — 15-min range, volume + VWAP confirmed, 2R target"
+    description = "Opening Range Breakout + ICC continuation, regime-filtered, 2R target"
 
     def __init__(self, config=None):
         super().__init__(config)
-        # ── Opening range definition ──
-        self.or_minutes = 15          # length of the opening range window
+        # ── Opening range ──
+        self.or_minutes = 15
         self.session_open = dtime(9, 30)
-        self.entry_cutoff = dtime(11, 30)   # no new breakouts after this (ET)
-        # ── Confluence filters ──
-        self.min_rel_volume = 1.2     # breakout bar must have above-average volume
-        self.use_vwap_filter = True   # longs above VWAP, shorts below
+        self.entry_cutoff = dtime(12, 0)      # no new entries after noon ET
+
+        # ── Entry model ──
+        self.entry_mode = "icc"               # "icc" | "breakout"
+
+        # ── Regime / trend filter ──
+        self.require_trend = True
+        self.min_adx = 18.0                   # below this = chop, stand aside
+        self.use_ema_filter = True            # longs above EMA-50, shorts below
+        self.use_vwap_filter = True           # longs above session VWAP, shorts below
+
+        # ── Confluence ──
+        self.min_rel_volume = 1.1
+
         # ── Risk / reward ──
-        self.target_r_multiple = 2.0  # target = 2x risk
-        self.stop_buffer_frac = 0.10  # stop sits this fraction of OR-range beyond the edge
+        self.target_r_multiple = 2.0
+        self.stop_buffer_frac = 0.10
         self.max_stop_dollars = getattr(config, "MAX_STOP_LOSS_DOLLARS", 250.0) if config else 250.0
         self.min_rr = getattr(config, "MIN_RISK_REWARD_RATIO", 2.0) if config else 2.0
 
@@ -68,30 +76,30 @@ class ORBStrategy(BaseStrategy):
     # ──────────────────────────────────────────────────────────────────────
     @staticmethod
     def _et_times(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
-        """Return the index expressed in US/Eastern, regardless of source tz."""
         if index.tz is None:
-            # yfinance sometimes hands back naive timestamps already in ET
             return index
         return index.tz_convert(ET)
 
-    def _opening_range(self, day_df: pd.DataFrame) -> Optional[tuple[float, float]]:
-        """Compute (OR high, OR low) from the first `or_minutes` of a single day."""
-        et = self._et_times(day_df.index)
-        # Bars whose timestamp falls within [09:30, 09:30 + or_minutes)
-        end_minute = self.session_open.hour * 60 + self.session_open.minute + self.or_minutes
-        in_range = []
-        for i, ts in enumerate(et):
-            minute_of_day = ts.hour * 60 + ts.minute
-            open_minute = self.session_open.hour * 60 + self.session_open.minute
-            if open_minute <= minute_of_day < end_minute:
-                in_range.append(i)
-        if not in_range:
+    @staticmethod
+    def _minute_of_day(ts) -> int:
+        return ts.hour * 60 + ts.minute
+
+    def _opening_range(self, day_df: pd.DataFrame, et: pd.DatetimeIndex) -> Optional[tuple[float, float]]:
+        open_min = self._minute_of_day(self.session_open)
+        end_min = open_min + self.or_minutes
+        idxs = [i for i, ts in enumerate(et) if open_min <= self._minute_of_day(ts) < end_min]
+        if not idxs:
             return None
-        window = day_df.iloc[in_range]
+        window = day_df.iloc[idxs]
         return float(window["high"].max()), float(window["low"].min())
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Core signal generation
+    def _session_vwap(self, day_df: pd.DataFrame) -> float:
+        typical = (day_df["high"] + day_df["low"] + day_df["close"]) / 3.0
+        cum_vol = day_df["volume"].cumsum()
+        vwap_series = (typical * day_df["volume"]).cumsum() / cum_vol.replace(0, float("nan"))
+        v = float(vwap_series.iloc[-1]) if not vwap_series.empty else float(day_df["close"].iloc[-1])
+        return v if v == v else float(day_df["close"].iloc[-1])
+
     # ──────────────────────────────────────────────────────────────────────
     def generate_signal(self, df: pd.DataFrame, symbol: str) -> Optional[dict]:
         if df is None or df.empty or len(df) < 5:
@@ -99,28 +107,22 @@ class ORBStrategy(BaseStrategy):
         if not {"open", "high", "low", "close", "volume"}.issubset(df.columns):
             return None
 
-        et = self._et_times(df.index)
-
-        # Isolate the most recent trading day present in the data
-        latest_date = et[-1].date()
-        day_mask = [ts.date() == latest_date for ts in et]
+        et_full = self._et_times(df.index)
+        latest_date = et_full[-1].date()
+        day_mask = [ts.date() == latest_date for ts in et_full]
         day_df = df[day_mask]
-        if len(day_df) < 2:
+        if len(day_df) < 4:
+            return None
+        et = self._et_times(day_df.index)
+
+        # Entry window: after OR forms, before cutoff
+        or_end_min = self._minute_of_day(self.session_open) + self.or_minutes
+        cutoff_min = self._minute_of_day(self.entry_cutoff)
+        curr_min = self._minute_of_day(et[-1])
+        if curr_min < or_end_min or curr_min > cutoff_min:
             return None
 
-        # The current (just-closed) bar and the one before it
-        curr = day_df.iloc[-1]
-        prev = day_df.iloc[-2]
-        curr_et = self._et_times(day_df.index)[-1]
-
-        # Must be inside the entry window: after the OR forms, before the cutoff
-        or_end_minute = (self.session_open.hour * 60 + self.session_open.minute) + self.or_minutes
-        cutoff_minute = self.entry_cutoff.hour * 60 + self.entry_cutoff.minute
-        curr_minute = curr_et.hour * 60 + curr_et.minute
-        if curr_minute < or_end_minute or curr_minute > cutoff_minute:
-            return None
-
-        rng = self._opening_range(day_df)
+        rng = self._opening_range(day_df, et)
         if rng is None:
             return None
         or_high, or_low = rng
@@ -128,37 +130,41 @@ class ORBStrategy(BaseStrategy):
         if or_range <= 0:
             return None
 
-        close = float(curr["close"])
-        prev_close = float(prev["close"])
-        rel_vol = float(curr.get("rel_volume", 1.0)) if "rel_volume" in day_df.columns else 1.0
+        # Post-opening-range bars (the tradable portion of the session)
+        post_idxs = [i for i, ts in enumerate(et) if self._minute_of_day(ts) >= or_end_min]
+        if len(post_idxs) < 2:
+            return None
+        post = day_df.iloc[post_idxs]
 
-        # Session VWAP — computed from THIS day's bars only (the global vwap in
-        # market_data is cumulative across all days, which is wrong for ORB).
-        day_typical = (day_df["high"] + day_df["low"] + day_df["close"]) / 3.0
-        cum_vol = day_df["volume"].cumsum()
-        vwap_series = (day_typical * day_df["volume"]).cumsum() / cum_vol.replace(0, float("nan"))
-        vwap = float(vwap_series.iloc[-1]) if not vwap_series.empty else close
-        if vwap != vwap:  # NaN guard
-            vwap = close
+        curr = post.iloc[-1]
+        close = float(curr["close"])
+        rel_vol = float(curr.get("rel_volume", 1.0)) if "rel_volume" in day_df.columns else 1.0
+        vwap = self._session_vwap(day_df)
+        ema_50 = float(curr.get("ema_50", close)) if "ema_50" in day_df.columns else close
+        adx = float(curr.get("adx", 0.0)) if "adx" in day_df.columns else 0.0
 
         point_value = POINT_VALUES.get(symbol.upper(), 5.0)
         max_stop_points = self.max_stop_dollars / point_value
 
-        direction = None
-        # Fresh breakout: prior bar inside range, current bar closes beyond it
-        if close > or_high and prev_close <= or_high:
-            direction = "long"
-        elif close < or_low and prev_close >= or_low:
-            direction = "short"
-        if direction is None:
+        # ── Pick direction + stop reference based on entry mode ──
+        if self.entry_mode == "icc":
+            setup = self._icc_setup(post, or_high, or_low)
+        else:
+            setup = self._breakout_setup(post, or_high, or_low)
+        if setup is None:
             return None
+        direction, stop_ref = setup  # stop_ref = price level the stop sits beyond
 
-        # ── Volume confirmation ──
+        # ── Filters ──
         if rel_vol < self.min_rel_volume:
             return None
-
-        # ── VWAP alignment ──
-        vwap_aligned = True
+        if self.require_trend and adx < self.min_adx:
+            return None
+        if self.use_ema_filter:
+            if direction == "long" and close < ema_50:
+                return None
+            if direction == "short" and close > ema_50:
+                return None
         if self.use_vwap_filter:
             if direction == "long" and close < vwap:
                 return None
@@ -169,44 +175,44 @@ class ORBStrategy(BaseStrategy):
         entry = close
         buffer = or_range * self.stop_buffer_frac
         if direction == "long":
-            raw_stop = or_low - buffer
+            raw_stop = stop_ref - buffer
             stop_dist = entry - raw_stop
-            if stop_dist > max_stop_points:        # hard $250 risk cap
-                stop_dist = max_stop_points
-            stop = entry - stop_dist
-            target = entry + stop_dist * self.target_r_multiple
         else:
-            raw_stop = or_high + buffer
+            raw_stop = stop_ref + buffer
             stop_dist = raw_stop - entry
-            if stop_dist > max_stop_points:
-                stop_dist = max_stop_points
-            stop = entry + stop_dist
-            target = entry - stop_dist * self.target_r_multiple
 
         if stop_dist <= 0:
             return None
+        if stop_dist > max_stop_points:        # hard $250 cap
+            stop_dist = max_stop_points
+
+        if direction == "long":
+            stop = entry - stop_dist
+            target = entry + stop_dist * self.target_r_multiple
+        else:
+            stop = entry + stop_dist
+            target = entry - stop_dist * self.target_r_multiple
 
         rr = abs(target - entry) / stop_dist
         risk_dollars = stop_dist * point_value
 
-        # ── Confidence score (0.55 – 0.90) ──
+        # ── Confidence ──
         confidence = 0.55
-        if rel_vol >= self.min_rel_volume:
+        if rel_vol >= 1.5:
             confidence += 0.10
         if rel_vol >= 2.0:
+            confidence += 0.05
+        if adx >= 25:
             confidence += 0.10
-        if self.use_vwap_filter and vwap_aligned:
-            confidence += 0.08
-        # Strong-body breakout bar (closed near its extreme in trade direction)
+        if self.entry_mode == "icc":
+            confidence += 0.08   # continuation entries are higher quality
         bar_range = float(curr["high"]) - float(curr["low"])
         if bar_range > 0:
-            if direction == "long":
-                body_pos = (close - float(curr["low"])) / bar_range
-            else:
-                body_pos = (float(curr["high"]) - close) / bar_range
+            body_pos = ((close - float(curr["low"])) / bar_range) if direction == "long" \
+                else ((float(curr["high"]) - close) / bar_range)
             if body_pos > 0.7:
                 confidence += 0.07
-        confidence = round(min(0.90, confidence), 4)
+        confidence = round(min(0.92, confidence), 4)
 
         signal = {
             "symbol": symbol,
@@ -223,23 +229,84 @@ class ORBStrategy(BaseStrategy):
             "strategy": self.name,
             "timeframe": "5m",
             "reason": (
-                f"ORB {direction} | OR[{or_low:.2f}-{or_high:.2f}] "
-                f"vol={rel_vol:.2f}x risk=${risk_dollars:.0f} R:R={rr:.1f}"
+                f"{self.entry_mode.upper()} {direction} | OR[{or_low:.2f}-{or_high:.2f}] "
+                f"adx={adx:.0f} vol={rel_vol:.2f}x risk=${risk_dollars:.0f} R:R={rr:.1f}"
             ),
             "indicators": {
                 "or_high": round(or_high, 2),
                 "or_low": round(or_low, 2),
                 "or_range": round(or_range, 2),
                 "rel_volume": round(rel_vol, 2),
+                "adx": round(adx, 1),
                 "vwap": round(vwap, 2),
+                "ema_50": round(ema_50, 2),
+                "entry_mode": self.entry_mode,
             },
         }
 
         if self.is_valid_signal(signal, self.max_stop_dollars, self.min_rr):
             logger.info(
-                "ORB signal: %s %s | conf=%.2f | entry=%.2f | SL=%.2f | TP=%.2f | R:R=%.1f",
-                direction.upper(), symbol, confidence,
+                "ORB[%s] signal: %s %s | conf=%.2f | entry=%.2f SL=%.2f TP=%.2f R:R=%.1f",
+                self.entry_mode, direction.upper(), symbol, confidence,
                 entry, stop, target, rr,
             )
             return signal
+        return None
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Entry models — return (direction, stop_reference) or None
+    # ──────────────────────────────────────────────────────────────────────
+    def _breakout_setup(self, post: pd.DataFrame, or_high: float, or_low: float):
+        """Classic: current bar closes beyond the range, prior bar inside it."""
+        if len(post) < 2:
+            return None
+        close = float(post.iloc[-1]["close"])
+        prev_close = float(post.iloc[-2]["close"])
+        if close > or_high and prev_close <= or_high:
+            return "long", or_low
+        if close < or_low and prev_close >= or_low:
+            return "short", or_high
+        return None
+
+    def _icc_setup(self, post: pd.DataFrame, or_high: float, or_low: float):
+        """
+        Indication → Correction → Continuation.
+
+        LONG:
+          • Indication : some earlier post-OR bar's HIGH exceeded or_high.
+          • Correction : the prior bar pulled back (lower high than the one
+                         before it) but its LOW stayed above or_high (held the
+                         breakout level).
+          • Continuation: the current bar closes above the prior (correction)
+                         bar's HIGH and above or_high — momentum resumes.
+          • Stop sits below the correction bar's low (tight).
+        SHORT is the mirror image.
+        """
+        if len(post) < 3:
+            return None
+
+        highs = post["high"].astype(float).tolist()
+        lows = post["low"].astype(float).tolist()
+        closes = post["close"].astype(float).tolist()
+
+        curr_close = closes[-1]
+        corr_high = highs[-2]   # the pullback (correction) bar
+        corr_low = lows[-2]
+        before_corr_high = highs[-3]
+        before_corr_low = lows[-3]
+
+        # ── LONG ──
+        broke_up = any(h > or_high for h in highs[:-1])
+        corrected_up = (corr_high < before_corr_high) and (corr_low > or_high)
+        continued_up = (curr_close > corr_high) and (curr_close > or_high)
+        if broke_up and corrected_up and continued_up:
+            return "long", corr_low
+
+        # ── SHORT ──
+        broke_down = any(l < or_low for l in lows[:-1])
+        corrected_down = (corr_low > before_corr_low) and (corr_high < or_low)
+        continued_down = (curr_close < corr_low) and (curr_close < or_low)
+        if broke_down and corrected_down and continued_down:
+            return "short", corr_high
+
         return None
