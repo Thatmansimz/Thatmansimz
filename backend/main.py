@@ -113,12 +113,18 @@ app.add_middleware(
 @app.get("/api/status")
 async def get_status():
     sched = get_scheduler_state()
+    sessions = market_data.get_sessions_status()
     return {
         "status": "ok",
         "broker": settings.BROKER,
         "prop_firm": settings.PROP_FIRM,
         "trading_enabled": settings.TRADING_ENABLED,
-        "market_open": market_data.is_market_open(),
+        # Futures platform → headline pill follows 24/5 futures hours, not the
+        # 9:30–16:00 stock session.
+        "market_open": sessions["futures_open"],
+        "stock_market_open": market_data.is_market_open(),
+        "sessions": sessions["sessions"],
+        "now_et": sessions["now_et"],
         "scheduler_running": sched["running"],
         "last_cycle": sched.get("last_cycle"),
         "signals_today": sched.get("signals_today", 0),
@@ -127,6 +133,20 @@ async def get_status():
         "max_stop_dollars": settings.MAX_STOP_LOSS_DOLLARS,
         "daily_target": settings.DAILY_PROFIT_TARGET_DOLLARS,
     }
+
+
+@app.post("/api/settings/max-stop")
+async def set_max_stop(value: float):
+    """Live-adjust the max stop-loss budget per trade from the dashboard."""
+    value = max(50.0, min(5000.0, round(float(value))))
+    settings.MAX_STOP_LOSS_DOLLARS = value
+    # Push into the running strategy so it takes effect on the next signal.
+    if scheduler is not None and getattr(scheduler, "strategy", None) is not None:
+        try:
+            scheduler.strategy.max_stop_dollars = value
+        except Exception:
+            pass
+    return {"max_stop_dollars": settings.MAX_STOP_LOSS_DOLLARS}
 
 
 # ── Account ───────────────────────────────────────────────────────────────────
@@ -439,7 +459,7 @@ async def websocket_live(ws: WebSocket):
                 open_trades = db.query(Trade).filter(Trade.status == "open").all()
                 await ws.send_json({
                     "type": "heartbeat",
-                    "market_open": market_data.is_market_open(),
+                    "market_open": market_data.is_futures_open(),
                     "daily_pnl": today.pnl if today else 0.0,
                     "open_positions": len(open_trades),
                     "scheduler": get_scheduler_state(),

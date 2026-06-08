@@ -11,6 +11,13 @@ async function api(path: string) {
   return res.json();
 }
 
+type SessionInfo = {
+  name: string;
+  label: string;
+  hours: string;
+  open: boolean;
+  kill_zone: boolean;
+};
 type Status = {
   trading_enabled: boolean;
   market_open: boolean;
@@ -20,6 +27,8 @@ type Status = {
   daily_target: number;
   max_stop_dollars: number;
   ai_threshold: number;
+  sessions?: SessionInfo[];
+  now_et?: string;
 };
 type Stats = { pnl: number; trades_count: number; wins: number; losses: number; win_rate: number };
 type Trade = {
@@ -101,6 +110,128 @@ function Ticker() {
   );
 }
 
+/* ── Global session clock bar ── */
+function SessionBar({ sessions, nowEt }: { sessions?: SessionInfo[]; nowEt?: string }) {
+  const fallback: SessionInfo[] = [
+    { name: "ASIA", label: "Asia · Tokyo", hours: "8:00 PM – 4:00 AM ET", open: false, kill_zone: false },
+    { name: "LONDON", label: "London", hours: "4:00 AM – 12:00 PM ET", open: false, kill_zone: false },
+    { name: "NEW_YORK", label: "New York", hours: "9:00 AM – 6:00 PM ET", open: false, kill_zone: false },
+  ];
+  const list = sessions && sessions.length ? sessions : fallback;
+  return (
+    <div className="flex items-center gap-2 flex-wrap px-1">
+      <span className="text-[9px] tracking-[0.3em] uppercase font-mono-hud mr-1" style={{ color: "#475569" }}>
+        ◆ Global Sessions
+      </span>
+      {list.map((s) => {
+        const color = s.kill_zone ? "#ffaa00" : s.open ? "#00ff88" : "#475569";
+        return (
+          <div
+            key={s.name}
+            title={`${s.label} · ${s.hours}${s.kill_zone ? " · PEAK VOLATILITY" : ""}`}
+            className={cn(
+              "session-chip flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-mono-hud",
+              s.kill_zone && "session-chip-kill",
+            )}
+            style={{
+              background: s.open ? `${color}14` : "#0a1525",
+              border: `1px solid ${s.open ? `${color}55` : "#1a2d4a"}`,
+            }}
+          >
+            <span
+              style={{
+                width: 7, height: 7, borderRadius: "50%", background: color,
+                boxShadow: s.open ? `0 0 8px ${color}` : "none",
+              }}
+            />
+            <span style={{ color: s.open ? color : "#475569", fontWeight: s.open ? 700 : 400 }}>
+              {s.label}
+            </span>
+            <span style={{ color: s.open ? `${color}aa` : "#334155" }}>
+              {s.kill_zone ? "PEAK" : s.open ? "OPEN" : "CLOSED"}
+            </span>
+          </div>
+        );
+      })}
+      {nowEt && (
+        <span className="text-[10px] font-mono-hud ml-auto" style={{ color: "#475569" }}>
+          {nowEt} ET
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── Max Stop adjustment control ── */
+function MaxStopControl({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+  const [draft, setDraft] = useState(value);
+  const [synced, setSynced] = useState(true);
+
+  // keep in sync when the server value changes (and we're not mid-drag)
+  useEffect(() => { if (synced) setDraft(value); }, [value, synced]);
+
+  const MIN = 50, MAX = 2000;
+  const pct = ((draft - MIN) / (MAX - MIN)) * 100;
+  const presets = [100, 250, 500, 1000];
+
+  function commit(v: number) {
+    const clamped = Math.max(MIN, Math.min(MAX, v));
+    setDraft(clamped);
+    setSynced(true);
+    onCommit(clamped);
+  }
+
+  return (
+    <div className="rounded-xl p-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span style={{ color: "#ffaa00" }}>◆</span>
+          <span className="text-[10px] tracking-widest uppercase font-mono-hud" style={{ color: "#475569" }}>
+            Max Stop / Trade
+          </span>
+        </div>
+        <span className="text-2xl font-bold font-mono-hud" style={{ color: "#ffaa00", textShadow: "0 0 14px #ffaa0088" }}>
+          ${draft}
+        </span>
+      </div>
+
+      <div className="relative">
+        <input
+          type="range" min={MIN} max={MAX} step={25} value={draft}
+          onChange={(e) => { setSynced(false); setDraft(Number(e.target.value)); }}
+          onMouseUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
+          onTouchEnd={(e) => commit(Number((e.target as HTMLInputElement).value))}
+          onKeyUp={(e) => commit(Number((e.target as HTMLInputElement).value))}
+          className="hud-range"
+          style={{ background: `linear-gradient(90deg, #ffaa00 ${pct}%, #0d1a2e ${pct}%)` }}
+        />
+      </div>
+
+      <div className="flex items-center justify-between mt-3">
+        <div className="flex gap-1.5">
+          {presets.map((p) => (
+            <button
+              key={p}
+              onClick={() => commit(p)}
+              className="px-2.5 py-1 rounded-md text-[10px] font-mono-hud transition-colors"
+              style={
+                draft === p
+                  ? { background: "#ffaa0022", border: "1px solid #ffaa0055", color: "#ffaa00" }
+                  : { background: "#0d1a2e", border: "1px solid #1a2d4a", color: "#475569" }
+              }
+            >
+              ${p}
+            </button>
+          ))}
+        </div>
+        <span className="text-[9px] font-mono-hud" style={{ color: synced ? "#334155" : "#ffaa00" }}>
+          {synced ? "applied to live engine" : "release to apply"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ── Section header ── */
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
   return (
@@ -170,6 +301,15 @@ export default function Dashboard() {
       await fetch(`${API}/api/trading/close-all`, { method: "POST" });
       await load();
     } finally { setClosing(false); }
+  }
+
+  async function saveMaxStop(v: number) {
+    // optimistic update so the gauge + stat reflect it instantly
+    setStatus((prev) => (prev ? { ...prev, max_stop_dollars: v } : prev));
+    try {
+      await fetch(`${API}/api/settings/max-stop?value=${v}`, { method: "POST" });
+      await load();
+    } catch (_) {}
   }
 
   const dailyPnl  = todayStats?.pnl ?? 0;
@@ -261,6 +401,11 @@ export default function Dashboard() {
       {/* ── Ticker ── */}
       <Ticker />
 
+      {/* ── Global session clock ── */}
+      <div className="max-w-screen-2xl mx-auto px-4 md:px-6 pt-4">
+        <SessionBar sessions={status?.sessions} nowEt={status?.now_et} />
+      </div>
+
       {/* ── Main content ── */}
       <main className="max-w-screen-2xl mx-auto px-4 md:px-6 py-6 space-y-6">
 
@@ -340,16 +485,15 @@ export default function Dashboard() {
             />
           </div>
 
-          {/* Stat strip */}
-          <div className="mt-6 pt-4" style={{ borderTop: "1px solid #1a2d4a" }}>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+          {/* Stat strip + risk control */}
+          <div className="mt-6 pt-4 grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ borderTop: "1px solid #1a2d4a" }}>
+            <div className="grid grid-cols-3 gap-4 text-center">
               {[
                 { label: "Trades Today", value: `${todayStats?.trades_count ?? 0}`,          color: "#00d4ff" },
                 { label: "Total P&L",    value: `$${(perf?.total_pnl ?? 0).toFixed(0)}`,     color: (perf?.total_pnl ?? 0) >= 0 ? "#00ff88" : "#ff3366" },
                 { label: "Profit Factor",value: perf?.profit_factor?.toFixed(2) ?? "—",      color: "#7c3aed" },
-                { label: "Max Stop",     value: `$${status?.max_stop_dollars ?? 250}`,        color: "#ffaa00" },
               ].map((s) => (
-                <div key={s.label} className="rounded-xl py-3 px-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+                <div key={s.label} className="rounded-xl py-3 px-4 flex flex-col justify-center" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
                   <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>{s.label}</p>
                   <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: s.color, textShadow: `0 0 12px ${s.color}88` }}>
                     {s.value}
@@ -357,6 +501,7 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+            <MaxStopControl value={status?.max_stop_dollars ?? 250} onCommit={saveMaxStop} />
           </div>
         </div>
 

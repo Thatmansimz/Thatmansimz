@@ -281,7 +281,7 @@ class MarketDataService:
         return bar.get("close")
 
     def is_market_open(self, symbol: str = "MES") -> bool:
-        """Return True if the regular session is currently open (9:30–16:00 ET Mon–Fri)."""
+        """Return True if the regular US equity session is open (9:30–16:00 ET Mon–Fri)."""
         import pytz
         from datetime import time as dtime
         ET = pytz.timezone("America/New_York")
@@ -290,6 +290,64 @@ class MarketDataService:
             return False
         current_time = now_et.time()
         return dtime(9, 30) <= current_time <= dtime(16, 0)
+
+    def is_futures_open(self) -> bool:
+        """
+        CME equity-index futures (ES/NQ/MES/MNQ) trade nearly 24/5:
+        Sunday 18:00 ET → Friday 17:00 ET, with a daily maintenance halt
+        17:00–18:00 ET. This is what the headline "MARKET" pill should reflect
+        for a futures platform — not the 9:30–16:00 stock session.
+        """
+        import pytz
+        from datetime import time as dtime
+        ET = pytz.timezone("America/New_York")
+        now = datetime.now(ET)
+        wd = now.weekday()          # Mon=0 … Sat=5, Sun=6
+        t = now.time()
+        if wd == 5:                                  # Saturday — closed all day
+            return False
+        if wd == 6:                                  # Sunday — opens 18:00 ET
+            return t >= dtime(18, 0)
+        if wd == 4 and t >= dtime(17, 0):            # Friday — closes 17:00 ET
+            return False
+        if dtime(17, 0) <= t < dtime(18, 0):         # daily maintenance halt
+            return False
+        return True
+
+    def get_sessions_status(self) -> dict:
+        """
+        Live open/closed state for the three global trading sessions, so the UI
+        can show *which* market is active (Asia/London/New York) instead of a
+        single binary 'closed'. Reuses the V2 session windows.
+        """
+        import pytz
+        from backend.strategies.v2 import sessions as V2S
+        ET = pytz.timezone("America/New_York")
+        now = datetime.now(ET)
+        minute = V2S._minute_of_day(now)
+
+        meta = {
+            "ASIA":     ("Asia · Tokyo", "8:00 PM – 4:00 AM ET"),
+            "LONDON":   ("London",       "4:00 AM – 12:00 PM ET"),
+            "NEW_YORK": ("New York",     "9:00 AM – 6:00 PM ET"),
+        }
+        futures_open = self.is_futures_open()
+        sessions = []
+        for sess in (V2S.ASIA, V2S.LONDON, V2S.NEW_YORK):
+            is_open = futures_open and V2S._in_window(minute, sess.start, sess.end)
+            label, hours = meta[sess.name]
+            sessions.append({
+                "name": sess.name,
+                "label": label,
+                "hours": hours,
+                "open": is_open,
+                "kill_zone": bool(is_open and V2S.in_kill_zone(now, sess)),
+            })
+        return {
+            "futures_open": futures_open,
+            "now_et": now.strftime("%H:%M"),
+            "sessions": sessions,
+        }
 
     def get_multi_timeframe(self, symbol: str) -> dict[str, pd.DataFrame]:
         """Return indicator-enriched DataFrames for 1m, 5m, and 15m timeframes."""
