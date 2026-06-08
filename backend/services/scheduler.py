@@ -105,10 +105,12 @@ class TradingScheduler:
 
             can_trade, reason = self.risk_manager.check_can_trade(today_stats, account)
             if not can_trade:
+                _scheduler_state["scan_status"] = reason
                 if reason not in ("Trading disabled", "Market closed"):
                     logger.info("Skipping signal scan: %s", reason)
                 return
 
+            _scheduler_state["scan_status"] = "scanning"
             for symbol in settings.SYMBOLS:
                 await self._scan_symbol(symbol, db, today_stats)
         finally:
@@ -134,6 +136,7 @@ class TradingScheduler:
             return
 
         if signal_data is None:
+            _scheduler_state["last_no_signal"] = f"{symbol} — no setup"
             return
 
         logger.info(
@@ -150,10 +153,15 @@ class TradingScheduler:
             db.commit()
 
         _scheduler_state["signals_today"] = _scheduler_state.get("signals_today", 0) + 1
+        _scheduler_state["last_signal_symbol"] = symbol
+        _scheduler_state["last_signal_dir"] = signal_data["direction"]
+        _scheduler_state["last_signal_conf"] = round(signal_data["confidence"] * 100)
+        _scheduler_state["scan_status"] = f"signal found: {signal_data['direction'].upper()} {symbol}"
 
         try:
             trade = await self.execution.process_signal(signal_data)
             if trade:
                 logger.info("Trade executed: ID=%d", trade.id)
+                _scheduler_state["scan_status"] = f"trade taken: {signal_data['direction'].upper()} {symbol}"
         except Exception as exc:
             logger.error("Execution error for %s signal: %s", symbol, exc)

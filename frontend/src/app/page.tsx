@@ -31,6 +31,10 @@ type Status = {
   now_et?: string;
   orb_window_active?: boolean;
   orb_opens_in_min?: number | null;
+  cycles_today?: number;
+  signals_today?: number;
+  scan_status?: string;
+  last_cycle?: string;
 };
 type Stats = { pnl: number; trades_count: number; wins: number; losses: number; win_rate: number };
 type Trade = {
@@ -131,6 +135,66 @@ function Ticker() {
 }
 
 /* ── Global session clock bar ── */
+/* ── Scan activity widget for the AI Signals panel ── */
+function ScanActivity({ status }: { status?: Status | null }) {
+  const running = !!status?.scheduler_running;
+  const enabled = !!status?.trading_enabled;
+  const cycles = status?.cycles_today ?? 0;
+  const signals = status?.signals_today ?? 0;
+  const raw = status?.scan_status ?? "";
+  const lastCycle = status?.last_cycle;
+
+  // Derive a clean one-liner from the scan_status string
+  let pulse = false;
+  let label = "IDLE";
+  let color = "#475569";
+  if (!running) {
+    label = "ENGINE OFF";
+  } else if (!enabled) {
+    label = "NOT ARMED";
+  } else if (raw.startsWith("trade taken")) {
+    label = "TRADE TAKEN ✓"; color = "#00ff88"; pulse = true;
+  } else if (raw.startsWith("signal found")) {
+    label = "SIGNAL SEEN ●"; color = "#00d4ff"; pulse = true;
+  } else if (raw === "scanning") {
+    label = "SCANNING ●"; color = "#00d4ff"; pulse = true;
+  } else if (raw === "Market closed") {
+    label = "MARKET CLOSED";
+  } else if (raw.includes("no setup")) {
+    label = "NO SETUP YET";  color = "#64748b";
+  } else if (raw) {
+    label = raw.toUpperCase().slice(0, 22);
+  }
+
+  // Format last cycle time as HH:MM:SS from ISO string
+  let lastScan = "—";
+  if (lastCycle) {
+    try { lastScan = new Date(lastCycle).toLocaleTimeString("en-US", { hour12: false }); } catch { /* */ }
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1 min-w-[120px]">
+      <div className="flex items-center gap-1.5">
+        <span
+          style={{
+            width: 6, height: 6, borderRadius: "50%", background: color,
+            boxShadow: pulse ? `0 0 8px ${color}` : "none",
+            animation: pulse ? "green-pulse 1.5s infinite" : "none",
+          }}
+        />
+        <span className="text-[9px] font-mono-hud font-bold tracking-wider" style={{ color }}>{label}</span>
+      </div>
+      <div className="flex items-center gap-3 text-[9px] font-mono-hud" style={{ color: "#334155" }}>
+        <span>{cycles} scans</span>
+        <span style={{ color: signals > 0 ? "#00d4ff" : "#334155" }}>{signals} signals</span>
+      </div>
+      {lastCycle && (
+        <span className="text-[9px] font-mono-hud" style={{ color: "#1e3a5f" }}>last: {lastScan}</span>
+      )}
+    </div>
+  );
+}
+
 /* ── Engine state pill: DISARMED / ARMED / LIVE ── */
 function fmtMins(m?: number | null): string {
   if (m == null || m < 0) return "";
@@ -907,11 +971,16 @@ export default function Dashboard() {
 
           {/* AI Signals */}
           <div className="glass-bright rounded-2xl p-5">
-            <SectionHeader title="AI Signals" sub="latest high-confidence setups" />
+            <div className="flex items-start justify-between">
+              <SectionHeader title="AI Signals" sub="latest high-confidence setups" />
+              <ScanActivity status={status} />
+            </div>
             {signals.length === 0 ? (
-              <div className="h-48 flex flex-col items-center justify-center gap-2">
-                <div className="text-2xl">◉</div>
-                <p className="text-xs font-mono-hud tracking-widest" style={{ color: "#1a2d4a" }}>SCANNING MARKETS...</p>
+              <div className="h-40 flex flex-col items-center justify-center gap-2">
+                <div className="text-2xl" style={{ color: "#1a2d4a" }}>◉</div>
+                <p className="text-xs font-mono-hud tracking-widest" style={{ color: "#1a2d4a" }}>
+                  {status?.trading_enabled && status?.orb_window_active ? "WATCHING FOR ORB SETUP..." : "ARMED · WAITING FOR NY SESSION"}
+                </p>
               </div>
             ) : (
               <div className="space-y-2 overflow-y-auto max-h-52 pr-1">

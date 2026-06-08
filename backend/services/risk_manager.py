@@ -119,8 +119,13 @@ class RiskManager:
         if rr < self.config.MIN_RISK_REWARD_RATIO:
             return False, f"R:R {rr:.2f} below minimum {self.config.MIN_RISK_REWARD_RATIO}"
 
-        if signal["confidence"] < self.config.AI_CONFIDENCE_THRESHOLD:
-            return False, f"Confidence {signal['confidence']:.2f} below threshold"
+        # Rule-based strategies (ORB, momentum) were validated in the backtest
+        # without a confidence gate — the strategy's own signal logic IS the
+        # quality filter. AI_CONFIDENCE_THRESHOLD applies to the ML model only.
+        strategy = signal.get("strategy", "")
+        if strategy not in ("orb", "momentum"):
+            if signal["confidence"] < self.config.AI_CONFIDENCE_THRESHOLD:
+                return False, f"Confidence {signal['confidence']:.2f} below threshold"
 
         return True, "ok"
 
