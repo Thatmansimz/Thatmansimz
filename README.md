@@ -64,8 +64,17 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 cd frontend
 npm install
 npm run dev
-# Open http://localhost:3000
 ```
+
+### View the app
+
+| What | URL |
+|------|-----|
+| **Dashboard (the cool UI)** | **http://localhost:3000** |
+| Backend API | http://localhost:8000 |
+| API docs (Swagger) | http://localhost:8000/docs |
+
+> The dashboard is the main event — open **http://localhost:3000** in your browser.
 
 ---
 
@@ -195,6 +204,62 @@ With a 60%+ win rate (the model's target), you need roughly 5 trades/day.
 
 ---
 
+## V2 — Multi-Session Engine (NQ / MNQ) — *Business Partner Strategy*
+
+> **V2 is fully isolated from V1.** It lives in its own package
+> (`backend/strategies/v2/`) and is **never the default**. Your validated V1
+> ORB code is untouched. Opt in with `STRATEGY=multi_session`.
+
+A 24/5 engine that trades **NQ** (E-mini, $20/pt) and **MNQ** (Micro, $2/pt)
+across all three global sessions, using a strict **two-indications** filter.
+
+### How V2 thinks (the spec, in order)
+
+1. **Sessions & kill zones** (`v2/sessions.py`) — identifies the active session
+   (Asia / London / New York), its peak-volatility "kill zone", and the
+   London↔NY overlap. Skips the first 5 min of each kill zone (volatility pause).
+   In the 09:00–12:00 overlap, NY structural levels win.
+2. **Macro zones** (`v2/macro_zones.py`) — draws support/resistance from the
+   **preceding** session's footprint (highest wick→body = resistance,
+   lowest wick→body = support). NY anchors off London, London off Asia, Asia off
+   the prior NY range.
+3. **Indicators** (`v2/indicators.py`) — Heikin Ashi candles, session-reset VWAP,
+   EMA-12, ATR.
+4. **Two-Indications entry** (`v2/strategy.py`):
+   - **Indication 1 — Velocity Break:** the prior Heikin-Ashi candle closes
+     beyond *both* VWAP and EMA-12, and is a *strong* candle (flat bottom for
+     longs / flat top for shorts — no shadow).
+   - **Indication 2 — Total Engulfing:** the current candle fully engulfs the
+     prior candle's entire range (high *and* low). Enter on its close.
+     ORB momentum metrics are attached if the setup fires in the first 15 min.
+5. **Risk** — structural stop 1 tick past the setup swing; TP at 1:1 (Asia
+   truncates) or 2:1 (London/NY expand); stop trails to breakeven at +1R then
+   follows EMA-12 / local pivots; contracts auto-scale by ATR to target the
+   **$500–$1,500 net-profit window** per setup.
+6. **Output** — every state change emits a programmatic JSON object
+   (`schema: tajari.v2.signal/1`): session, bias, entry/stop/targets, R:R,
+   contracts, macro zones, ORB context, and trailing config.
+
+### Run the V2 backtest
+```bash
+# All sessions
+python3 scripts/v2_backtest.py --symbol MNQ --period 30d
+
+# Full-size NQ, New York session only
+python3 scripts/v2_backtest.py --symbol NQ --period 30d --session NEW_YORK
+```
+
+### Run V2 live (opt-in)
+```env
+# .env
+STRATEGY=multi_session
+SYMBOLS=["NQ","MNQ"]
+```
+Then start the backend as usual. V1 ORB remains the default whenever
+`STRATEGY=orb`.
+
+---
+
 ## Risk Disclaimer
 
 This software is for educational and research purposes. Past backtest performance does not guarantee future results. Day trading involves substantial risk of loss. Prop firm evaluations can fail. Never risk money you cannot afford to lose.
@@ -219,9 +284,18 @@ backend/
     ├── paper_broker.py  Built-in paper trading (no API keys needed)
     ├── alpaca_broker.py Alpaca Markets (stocks, ETFs, paper trading)
     └── tradovate_broker.py Tradovate (futures: MES, MNQ, MGC)
+backend/strategies/
+├── orb.py               V1 — validated Opening Range Breakout (DEFAULT)
+├── momentum.py / ml_strategy.py
+└── v2/                  V2 — multi-session engine (isolated, opt-in)
+    ├── sessions.py      Asia/London/NY windows, kill zones, overlap
+    ├── indicators.py    Heikin Ashi, session VWAP, EMA-12, ATR
+    ├── macro_zones.py   Support/resistance from preceding session
+    └── strategy.py      Two-Indications engulfing engine + JSON schema
 frontend/
 └── src/app/page.tsx     React dashboard with live data, P&L chart, signals panel
 scripts/
 ├── train_model.py       Download data and train ML models
-└── backtest.py          Simulate strategy on historical data
+├── backtest.py          V1 ORB backtester
+└── v2_backtest.py       V2 multi-session backtester
 ```

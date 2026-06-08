@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     # ORB validated at 1R targets — keep the min R:R gate at 1.0 so they pass.
     MIN_RISK_REWARD_RATIO: float = 1.0
 
-    # Active strategy: "orb" | "momentum" | "ml"
+    # Active strategy: "orb" | "momentum" | "ml" | "multi_session" (V2)
+    # NOTE: "orb" remains the validated default. "multi_session" is the V2
+    # business-partner engine — opt in explicitly via STRATEGY=multi_session.
     STRATEGY: str = "orb"
 
     # Red-folder (high-impact) news filter
@@ -159,6 +161,13 @@ class Settings(BaseSettings):
             "point_value": 2.0,
             "margin": 40.0,
             "description": "Micro E-mini Nasdaq-100",
+        },
+        "NQ": {
+            "tick_size": 0.25,
+            "tick_value": 5.0,
+            "point_value": 20.0,
+            "margin": 1800.0,
+            "description": "E-mini Nasdaq-100 (V2 full-size)",
         },
         "MGC": {
             "tick_size": 0.10,

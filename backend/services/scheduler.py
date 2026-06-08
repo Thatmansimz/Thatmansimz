@@ -50,6 +50,10 @@ class TradingScheduler:
         elif self.strategy_name == "momentum":
             from backend.strategies.momentum import MomentumStrategy
             self.strategy = MomentumStrategy(settings)
+        elif self.strategy_name == "multi_session":
+            # V2 business-partner engine (NQ/MNQ, 3 sessions). Opt-in only.
+            from backend.strategies.v2 import MultiSessionStrategy
+            self.strategy = MultiSessionStrategy(settings)
         _scheduler_state["strategy"] = self.strategy_name
         logger.info("Active strategy: %s", self.strategy_name)
 
