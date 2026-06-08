@@ -52,6 +52,24 @@ type PropStatus = {
 type Perf = {
   total_trades: number; win_rate: number; avg_win: number;
   avg_loss: number; profit_factor: number; total_pnl: number;
+  wins?: number; losses?: number; expectancy?: number;
+};
+type Bucket = {
+  trades: number; wins: number; losses: number; win_rate: number;
+  pnl: number; avg_win: number; avg_loss: number; payoff: number; expectancy: number;
+};
+type Insights = {
+  total_trades: number;
+  overall: Bucket;
+  win_loss_ratio: number;
+  by_direction: Record<string, Bucket>;
+  by_symbol: Record<string, Bucket>;
+  by_session: Record<string, Bucket>;
+  by_exit: Record<string, Bucket>;
+  by_confidence: Record<string, Bucket>;
+  strengths: string[];
+  weaknesses: string[];
+  note?: string;
 };
 
 function cn(...c: (string | boolean | undefined)[]) { return c.filter(Boolean).join(" "); }
@@ -232,6 +250,128 @@ function MaxStopControl({ value, onCommit }: { value: number; onCommit: (v: numb
   );
 }
 
+/* ── Win / Loss ratio card ── */
+function WinLossCard({ perf }: { perf: Perf | null }) {
+  const wins = perf?.wins ?? 0;
+  const losses = perf?.losses ?? 0;
+  const total = wins + losses;
+  const winPct = total ? (wins / total) * 100 : 0;
+  const wl = losses ? wins / losses : wins;
+  const payoff = perf && perf.avg_loss ? Math.abs(perf.avg_win / perf.avg_loss) : 0;
+  const GREEN = "#00ff88", RED = "#ff3366";
+  return (
+    <div className="rounded-xl p-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span style={{ color: "#00d4ff" }}>◆</span>
+          <span className="text-[10px] tracking-widest uppercase font-mono-hud" style={{ color: "#475569" }}>
+            Win / Loss Ratio
+          </span>
+        </div>
+        <span className="text-2xl font-bold font-mono-hud" style={{ color: "#00d4ff", textShadow: "0 0 14px #00d4ff88" }}>
+          {wl.toFixed(2)}<span className="text-sm" style={{ color: "#475569" }}> : 1</span>
+        </span>
+      </div>
+      <div className="flex h-3 rounded-full overflow-hidden" style={{ background: "#0d1a2e" }}>
+        <div style={{ width: `${winPct}%`, background: `linear-gradient(90deg,${GREEN}88,${GREEN})`, boxShadow: `0 0 8px ${GREEN}`, transition: "width 0.6s ease" }} />
+        <div style={{ flex: 1, background: `linear-gradient(90deg,${RED},${RED}88)` }} />
+      </div>
+      <div className="flex items-center justify-between mt-2 text-[10px] font-mono-hud">
+        <span style={{ color: GREEN }}>{wins}W</span>
+        <span style={{ color: "#475569" }}>payoff <span style={{ color: payoff >= 1 ? GREEN : "#ffaa00" }}>{payoff.toFixed(2)}x</span></span>
+        <span style={{ color: RED }}>{losses}L</span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Trade insights (strengths / weaknesses) ── */
+function EdgeRow({ name, b }: { name: string; b: Bucket }) {
+  const pos = b.pnl >= 0;
+  return (
+    <div className="flex items-center justify-between py-1.5 px-2 rounded-lg" style={{ background: "#0a1525" }}>
+      <span className="text-[10px] font-mono-hud" style={{ color: "#94a3b8" }}>{name}</span>
+      <div className="flex items-center gap-3 text-[10px] font-mono-hud">
+        <span style={{ color: "#475569" }}>{b.trades}t</span>
+        <span style={{ color: b.win_rate >= 50 ? "#00ff88" : "#ffaa00" }}>{b.win_rate}%</span>
+        <span className="w-16 text-right font-bold" style={{ color: pos ? "#00ff88" : "#ff3366" }}>
+          {pos ? "+" : ""}${b.pnl.toFixed(0)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function InsightsPanel({ insights }: { insights: Insights | null }) {
+  if (!insights || insights.total_trades === 0) {
+    return (
+      <div className="glass-bright rounded-2xl p-5">
+        <SectionHeader title="Trade Insights" sub="strengths & weaknesses · auto-learned" />
+        <div className="py-10 flex flex-col items-center gap-2 text-center">
+          <div className="text-3xl" style={{ color: "#1a2d4a" }}>◍</div>
+          <p className="text-xs font-mono-hud tracking-wide max-w-md" style={{ color: "#475569" }}>
+            {insights?.note ?? "Insights unlock as trades close — your best direction, session, and instrument will surface here automatically."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  const dirEntries = Object.entries(insights.by_direction);
+  const sessEntries = Object.entries(insights.by_session).filter(([k]) => k !== "Unknown");
+  return (
+    <div className="glass-bright rounded-2xl p-5">
+      <SectionHeader title="Trade Insights" sub={`${insights.total_trades} trades analyzed · expectancy $${insights.overall.expectancy.toFixed(0)}/trade`} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Strengths */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span style={{ color: "#00ff88" }}>▲</span>
+            <span className="text-[10px] tracking-widest uppercase font-mono-hud" style={{ color: "#00ff88" }}>Strengths</span>
+          </div>
+          <div className="space-y-2">
+            {insights.strengths.map((s, i) => (
+              <div key={i} className="flex gap-2 text-[11px] leading-snug p-2 rounded-lg" style={{ background: "#00ff8808", border: "1px solid #00ff8822" }}>
+                <span style={{ color: "#00ff88" }}>✓</span>
+                <span style={{ color: "#cbd5e1" }}>{s}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Weaknesses */}
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span style={{ color: "#ff3366" }}>▼</span>
+            <span className="text-[10px] tracking-widest uppercase font-mono-hud" style={{ color: "#ff3366" }}>Weaknesses</span>
+          </div>
+          <div className="space-y-2">
+            {insights.weaknesses.map((w, i) => (
+              <div key={i} className="flex gap-2 text-[11px] leading-snug p-2 rounded-lg" style={{ background: "#ff336608", border: "1px solid #ff336622" }}>
+                <span style={{ color: "#ff3366" }}>!</span>
+                <span style={{ color: "#cbd5e1" }}>{w}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      {/* Edge map */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mt-5 pt-4" style={{ borderTop: "1px solid #1a2d4a" }}>
+        <div>
+          <p className="text-[9px] tracking-widest uppercase font-mono-hud mb-2" style={{ color: "#334155" }}>By Direction</p>
+          <div className="space-y-1.5">
+            {dirEntries.map(([k, b]) => <EdgeRow key={k} name={k.toUpperCase()} b={b} />)}
+          </div>
+        </div>
+        <div>
+          <p className="text-[9px] tracking-widest uppercase font-mono-hud mb-2" style={{ color: "#334155" }}>By Session</p>
+          <div className="space-y-1.5">
+            {sessEntries.map(([k, b]) => <EdgeRow key={k} name={k} b={b} />)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ── Section header ── */
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
   return (
@@ -252,6 +392,7 @@ export default function Dashboard() {
   const [signals,      setSignals]      = useState<Signal[]>([]);
   const [propStatus,   setPropStatus]   = useState<PropStatus | null>(null);
   const [perf,         setPerf]         = useState<Perf | null>(null);
+  const [insights,     setInsights]     = useState<Insights | null>(null);
   const [dailyHistory, setDailyHistory] = useState<{ date: string; pnl: number }[]>([]);
   const [trading,      setTrading]      = useState(false);
   const [closing,      setClosing]      = useState(false);
@@ -259,10 +400,11 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     try {
-      const [s, t, tr, sg, ps, pf, dh] = await Promise.allSettled([
+      const [s, t, tr, sg, ps, pf, dh, ins] = await Promise.allSettled([
         api("/api/status"), api("/api/stats/today"), api("/api/trades/today"),
         api("/api/signals?limit=10"), api("/api/prop-firm/status"),
         api("/api/stats/performance"), api("/api/stats/daily"),
+        api("/api/stats/insights"),
       ]);
       if (s.status  === "fulfilled") setStatus(s.value);
       if (t.status  === "fulfilled") setTodayStats(t.value);
@@ -271,6 +413,7 @@ export default function Dashboard() {
       if (ps.status === "fulfilled") setPropStatus(ps.value);
       if (pf.status === "fulfilled") setPerf(pf.value);
       if (dh.status === "fulfilled") setDailyHistory(dh.value.slice(0, 30).reverse());
+      if (ins.status === "fulfilled") setInsights(ins.value);
     } catch (_) {}
   }, []);
 
@@ -487,19 +630,23 @@ export default function Dashboard() {
 
           {/* Stat strip + risk control */}
           <div className="mt-6 pt-4 grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ borderTop: "1px solid #1a2d4a" }}>
-            <div className="grid grid-cols-3 gap-4 text-center">
-              {[
-                { label: "Trades Today", value: `${todayStats?.trades_count ?? 0}`,          color: "#00d4ff" },
-                { label: "Total P&L",    value: `$${(perf?.total_pnl ?? 0).toFixed(0)}`,     color: (perf?.total_pnl ?? 0) >= 0 ? "#00ff88" : "#ff3366" },
-                { label: "Profit Factor",value: perf?.profit_factor?.toFixed(2) ?? "—",      color: "#7c3aed" },
-              ].map((s) => (
-                <div key={s.label} className="rounded-xl py-3 px-4 flex flex-col justify-center" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
-                  <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>{s.label}</p>
-                  <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: s.color, textShadow: `0 0 12px ${s.color}88` }}>
-                    {s.value}
-                  </p>
-                </div>
-              ))}
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                {[
+                  { label: "Trades Today", value: `${todayStats?.trades_count ?? 0}`,          color: "#00d4ff" },
+                  { label: "Total P&L",    value: `$${(perf?.total_pnl ?? 0).toFixed(0)}`,     color: (perf?.total_pnl ?? 0) >= 0 ? "#00ff88" : "#ff3366" },
+                  { label: "Profit Factor",value: perf?.profit_factor?.toFixed(2) ?? "—",      color: "#7c3aed" },
+                ].map((s) => (
+                  <div key={s.label} className="rounded-xl py-3 px-4 flex flex-col justify-center" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+                    <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>{s.label}</p>
+                    <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: s.color, textShadow: `0 0 12px ${s.color}88` }}>
+                      {s.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {/* Win/Loss ratio — second row, left of Max Stop */}
+              <WinLossCard perf={perf} />
             </div>
             <MaxStopControl value={status?.max_stop_dollars ?? 250} onCommit={saveMaxStop} />
           </div>
@@ -617,6 +764,9 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        {/* ── Trade Insights ── */}
+        <InsightsPanel insights={insights} />
 
         {/* ── Open Positions ── */}
         <div className="glass-bright rounded-2xl p-5">

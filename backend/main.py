@@ -291,6 +291,152 @@ async def performance_stats(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/stats/insights")
+async def trade_insights(db: Session = Depends(get_db)):
+    """
+    Break the closed-trade history down by direction, symbol, session,
+    exit reason and AI-confidence, then auto-generate plain-English
+    strengths and weaknesses so the operator can SEE the edge (and the leaks).
+    """
+    import pytz
+    from backend.strategies.v2 import sessions as V2S
+
+    ET = pytz.timezone("America/New_York")
+    UTC = pytz.utc
+    SESSION_LABEL = {"ASIA": "Asia", "LONDON": "London", "NEW_YORK": "New York"}
+
+    trades = db.query(Trade).filter(
+        Trade.status.in_(["closed", "stopped_out", "target_hit"])
+    ).all()
+
+    def stats_for(subset) -> dict:
+        n = len(subset)
+        if n == 0:
+            return {"trades": 0, "wins": 0, "losses": 0, "win_rate": 0.0,
+                    "pnl": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+                    "payoff": 0.0, "expectancy": 0.0}
+        wins = [t for t in subset if (t.net_pnl or 0) > 0]
+        losses = [t for t in subset if (t.net_pnl or 0) <= 0]
+        gw = sum(t.net_pnl or 0 for t in wins)
+        gl = abs(sum(t.net_pnl or 0 for t in losses))
+        aw = gw / len(wins) if wins else 0.0
+        al = gl / len(losses) if losses else 0.0
+        pnl = sum(t.net_pnl or 0 for t in subset)
+        return {
+            "trades": n, "wins": len(wins), "losses": len(losses),
+            "win_rate": round(len(wins) / n * 100, 1),
+            "pnl": round(pnl, 2),
+            "avg_win": round(aw, 2), "avg_loss": round(-al, 2),
+            "payoff": round(aw / al, 2) if al > 0 else 0.0,
+            "expectancy": round(pnl / n, 2),
+        }
+
+    if not trades:
+        return {
+            "total_trades": 0, "overall": stats_for([]), "win_loss_ratio": 0.0,
+            "by_direction": {}, "by_symbol": {}, "by_session": {},
+            "by_exit": {}, "by_confidence": {},
+            "strengths": [], "weaknesses": [],
+            "note": "Insights unlock as trades close. Run in paper mode to build history — they'll auto-surface your best direction, session, and instrument.",
+        }
+
+    def session_of(t) -> str:
+        if not t.entry_time:
+            return "Unknown"
+        ts = t.entry_time
+        if ts.tzinfo is None:
+            ts = UTC.localize(ts)
+        sess = V2S.active_session(ts.astimezone(ET))
+        return SESSION_LABEL.get(sess.name, "Off-session") if sess else "Off-session"
+
+    def conf_bucket(t) -> str:
+        c = t.ai_confidence or 0
+        if c >= 0.75:
+            return ">75%"
+        if c >= 0.65:
+            return "65-75%"
+        return "<65%"
+
+    def group(key_fn) -> dict:
+        buckets: dict = {}
+        for t in trades:
+            buckets.setdefault(key_fn(t), []).append(t)
+        return {k: stats_for(v) for k, v in buckets.items()}
+
+    overall = stats_for(trades)
+    by_direction = group(lambda t: (t.side or "?").lower())
+    by_symbol = group(lambda t: t.symbol or "?")
+    by_session = group(session_of)
+    by_exit = group(lambda t: t.status)
+    by_confidence = group(conf_bucket)
+
+    wl_ratio = round(overall["wins"] / overall["losses"], 2) if overall["losses"] else float(overall["wins"])
+
+    # ── auto strengths / weaknesses ──
+    strengths, weaknesses = [], []
+
+    if overall["payoff"] >= 1.0:
+        strengths.append(f"Winners pay {overall['payoff']}x your losers (${overall['avg_win']:.0f} vs ${abs(overall['avg_loss']):.0f}) — the risk/reward math works.")
+    elif overall["payoff"] > 0:
+        weaknesses.append(f"Losers (${abs(overall['avg_loss']):.0f}) outweigh winners (${overall['avg_win']:.0f}) — payoff only {overall['payoff']}x. Let winners run or cut losers faster.")
+
+    L, Sh = by_direction.get("long"), by_direction.get("short")
+    if L and Sh and L["trades"] >= 3 and Sh["trades"] >= 3:
+        if L["win_rate"] - Sh["win_rate"] >= 15:
+            strengths.append(f"Longs win {L['win_rate']}% vs shorts {Sh['win_rate']}% — your edge is on the buy side. Filter shorts harder.")
+        elif Sh["win_rate"] - L["win_rate"] >= 15:
+            strengths.append(f"Shorts win {Sh['win_rate']}% vs longs {L['win_rate']}% — your edge is on the sell side.")
+
+    rich_syms = {k: v for k, v in by_symbol.items() if v["trades"] >= 3}
+    if len(rich_syms) >= 2:
+        best = max(rich_syms, key=lambda k: rich_syms[k]["expectancy"])
+        worst = min(rich_syms, key=lambda k: rich_syms[k]["expectancy"])
+        if rich_syms[best]["expectancy"] > 0:
+            strengths.append(f"{best} is your best instrument: +${rich_syms[best]['expectancy']:.0f}/trade over {rich_syms[best]['trades']} trades.")
+        if rich_syms[worst]["expectancy"] < 0:
+            weaknesses.append(f"{worst} is bleeding ${abs(rich_syms[worst]['expectancy']):.0f}/trade over {rich_syms[worst]['trades']} trades — consider dropping it.")
+
+    for name, st in by_session.items():
+        if st["trades"] >= 4 and st["pnl"] < 0:
+            weaknesses.append(f"{name} session is net negative (${st['pnl']:.0f} over {st['trades']} trades) — strong candidate to turn off.")
+        elif st["trades"] >= 4 and st["win_rate"] >= 58 and st["pnl"] > 0:
+            strengths.append(f"{name} is your power window: {st['win_rate']}% win rate, +${st['pnl']:.0f}.")
+
+    hi, lo = by_confidence.get(">75%"), by_confidence.get("<65%")
+    if hi and lo and hi["trades"] >= 3 and lo["trades"] >= 3:
+        if hi["win_rate"] > lo["win_rate"] + 10:
+            strengths.append(f"High-confidence signals (>75%) win {hi['win_rate']}% vs {lo['win_rate']}% for low — the AI score is predictive. Raising your threshold would help.")
+        elif lo["win_rate"] >= hi["win_rate"]:
+            weaknesses.append("Low-confidence trades win as often as high-confidence ones — the confidence score needs recalibration.")
+
+    so = by_exit.get("stopped_out")
+    if so and overall["trades"] and so["trades"] / overall["trades"] >= 0.5:
+        weaknesses.append(f"{so['trades']} of {overall['trades']} trades hit the stop — stops may be too tight or entries too early.")
+
+    if overall["expectancy"] > 0:
+        strengths.append(f"Positive expectancy: +${overall['expectancy']:.0f} per trade. This is the number that scales when you add size.")
+    else:
+        weaknesses.append(f"Negative expectancy: -${abs(overall['expectancy']):.0f} per trade. Do NOT add size until this flips positive.")
+
+    if not strengths:
+        strengths.append("No clear edge has emerged yet — let the sample grow before drawing conclusions.")
+    if not weaknesses:
+        weaknesses.append("No glaring leaks in this sample — keep monitoring as trades accumulate.")
+
+    return {
+        "total_trades": overall["trades"],
+        "overall": overall,
+        "win_loss_ratio": wl_ratio,
+        "by_direction": by_direction,
+        "by_symbol": by_symbol,
+        "by_session": by_session,
+        "by_exit": by_exit,
+        "by_confidence": by_confidence,
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+    }
+
+
 # ── Trading Control ───────────────────────────────────────────────────────────
 
 @app.post("/api/trading/start")
