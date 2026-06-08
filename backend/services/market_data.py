@@ -13,11 +13,17 @@ import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
-# Map internal symbols to yfinance tickers
+# Map internal symbols to yfinance tickers.
+# NQ (E-mini) and MNQ (Micro) share the same underlying Nasdaq-100 future for
+# DATA purposes — the $20 vs $2 per-point difference is applied later via each
+# instrument's point_value, not the price feed. Same for ES/MES.
 SYMBOL_MAP = {
-    "MES": "ES=F",   # E-mini S&P 500 futures (proxy)
-    "MNQ": "NQ=F",   # E-mini Nasdaq-100 futures (proxy)
-    "MGC": "GC=F",   # Gold futures proxy
+    "ES": "ES=F",    # E-mini S&P 500 futures
+    "MES": "ES=F",   # Micro E-mini S&P 500 (same feed as ES)
+    "NQ": "NQ=F",    # E-mini Nasdaq-100 futures
+    "MNQ": "NQ=F",   # Micro E-mini Nasdaq-100 (same feed as NQ)
+    "GC": "GC=F",    # Gold futures
+    "MGC": "GC=F",   # Micro Gold (same feed as GC)
     "SPY": "SPY",
     "QQQ": "QQQ",
 }
