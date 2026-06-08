@@ -35,7 +35,8 @@ class Settings(BaseSettings):
 
     # AI settings
     AI_CONFIDENCE_THRESHOLD: float = 0.65
-    MIN_RISK_REWARD_RATIO: float = 2.0
+    # ORB validated at 1R targets — keep the min R:R gate at 1.0 so they pass.
+    MIN_RISK_REWARD_RATIO: float = 1.0
 
     # Active strategy: "orb" | "momentum" | "ml"
     STRATEGY: str = "orb"

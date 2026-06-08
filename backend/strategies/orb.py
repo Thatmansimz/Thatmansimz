@@ -54,19 +54,22 @@ class ORBStrategy(BaseStrategy):
         self.entry_cutoff = dtime(12, 0)      # no new entries after noon ET
 
         # ── Entry model ──
-        self.entry_mode = "icc"               # "icc" | "breakout"
+        # Validated config (60d MES+MNQ): plain breakout @ 1R beat ICC and the
+        # trend-filtered variants. MES PF 2.66 / MNQ PF 1.61. Simpler won.
+        self.entry_mode = "breakout"          # "icc" | "breakout"
 
-        # ── Regime / trend filter ──
-        self.require_trend = True
-        self.min_adx = 18.0                   # below this = chop, stand aside
-        self.use_ema_filter = True            # longs above EMA-50, shorts below
-        self.use_vwap_filter = True           # longs above session VWAP, shorts below
+        # ── Regime / trend filter ── (OFF: backtests showed they cut good trades)
+        self.require_trend = False
+        self.min_adx = 18.0                   # only used if require_trend re-enabled
+        self.use_ema_filter = False           # longs above EMA-50, shorts below
+        self.use_vwap_filter = False          # longs above session VWAP, shorts below
 
         # ── Confluence ──
         self.min_rel_volume = 1.1
 
         # ── Risk / reward ──
-        self.target_r_multiple = 2.0
+        # Index futures mean-revert intraday → grab 1R fast. 2R/1.5R underperformed.
+        self.target_r_multiple = 1.0
         self.stop_buffer_frac = 0.10
         self.max_stop_dollars = getattr(config, "MAX_STOP_LOSS_DOLLARS", 250.0) if config else 250.0
         self.min_rr = getattr(config, "MIN_RISK_REWARD_RATIO", 2.0) if config else 2.0
