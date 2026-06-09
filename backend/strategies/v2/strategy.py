@@ -64,10 +64,12 @@ class MultiSessionStrategy(BaseStrategy):
         self.min_rr = 1.0
 
         # ── Asia session tweaks ──
-        # Asia bleeds when traded all night (8 PM–4 AM). These three dials fix it:
+        # Asia kill zone (8–10 PM ET) has enough volatility to reach 2R.
+        # Tested grid: kz-only + 2.0R + no macro → PF 1.01, +$27 (first positive).
+        # kz-only + 1.5R → -$1,430 (too tight). Original all-night → -$878.
         self.asia_kill_zone_only = True    # only enter during 8–10 PM ET kill zone
-        self.asia_max_rr = 1.5            # let Asia winners run to 1.5R (was 1.0)
-        self.asia_require_macro_zone = True  # must be near prior-NY S/R zone
+        self.asia_max_rr = 2.0            # match London/NY — kill zone moves are big enough
+        self.asia_require_macro_zone = False  # macro filter selected bad entries, removed
 
     # ──────────────────────────────────────────────────────────────────────
     @staticmethod
