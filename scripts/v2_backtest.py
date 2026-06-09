@@ -33,8 +33,8 @@ from backend.strategies.v2.strategy import SPECS
 
 def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
              asia_kill_zone_only: bool = True,
-             asia_max_rr: float = 1.5,
-             asia_require_macro_zone: bool = True) -> dict:
+             asia_max_rr: float = 2.0,
+             asia_require_macro_zone: bool = False) -> dict:
     strat = MultiSessionStrategy()
     strat.asia_kill_zone_only = asia_kill_zone_only
     strat.asia_max_rr = asia_max_rr
@@ -138,7 +138,7 @@ def main():
                     help="restrict trades to one session")
     ap.add_argument("--no-asia-kz-only", action="store_true",
                     help="allow Asia trades outside kill zone (reverts to original)")
-    ap.add_argument("--asia-rr", type=float, default=1.5,
+    ap.add_argument("--asia-rr", type=float, default=2.0,
                     help="Asia R:R target (default 1.5, original was 1.0)")
     ap.add_argument("--no-asia-macro", action="store_true",
                     help="allow Asia trades without macro zone confluence")
