@@ -31,8 +31,14 @@ from backend.strategies.v2 import sessions as S
 from backend.strategies.v2.strategy import SPECS
 
 
-def simulate(df: pd.DataFrame, symbol: str, only_session: str | None) -> dict:
+def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
+             asia_kill_zone_only: bool = True,
+             asia_max_rr: float = 1.5,
+             asia_require_macro_zone: bool = True) -> dict:
     strat = MultiSessionStrategy()
+    strat.asia_kill_zone_only = asia_kill_zone_only
+    strat.asia_max_rr = asia_max_rr
+    strat.asia_require_macro_zone = asia_require_macro_zone
     spec = SPECS.get(symbol.upper(), SPECS["MNQ"])
     pv = spec["point_value"]
 
@@ -130,6 +136,12 @@ def main():
     ap.add_argument("--session", default=None,
                     choices=["ASIA", "LONDON", "NEW_YORK"],
                     help="restrict trades to one session")
+    ap.add_argument("--no-asia-kz-only", action="store_true",
+                    help="allow Asia trades outside kill zone (reverts to original)")
+    ap.add_argument("--asia-rr", type=float, default=1.5,
+                    help="Asia R:R target (default 1.5, original was 1.0)")
+    ap.add_argument("--no-asia-macro", action="store_true",
+                    help="allow Asia trades without macro zone confluence")
     args = ap.parse_args()
 
     print("=" * 66)
@@ -147,7 +159,13 @@ def main():
         print("  ERROR: No data available (run locally — sandbox blocks market data).")
         sys.exit(0)
 
-    stats = simulate(df, args.symbol, args.session)
+    print(f"  Asia tweaks: kill-zone-only={not args.no_asia_kz_only}  "
+          f"rr={args.asia_rr}  macro-zone={not args.no_asia_macro}")
+    print()
+    stats = simulate(df, args.symbol, args.session,
+                     asia_kill_zone_only=not args.no_asia_kz_only,
+                     asia_max_rr=args.asia_rr,
+                     asia_require_macro_zone=not args.no_asia_macro)
     if "error" in stats:
         print(f"  No trades: {stats['error']}")
         sys.exit(0)

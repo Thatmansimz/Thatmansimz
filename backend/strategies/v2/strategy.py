@@ -63,6 +63,12 @@ class MultiSessionStrategy(BaseStrategy):
         # V2 sizes to a profit window, not a hard stop cap. Keep min R:R modest.
         self.min_rr = 1.0
 
+        # ── Asia session tweaks ──
+        # Asia bleeds when traded all night (8 PM–4 AM). These three dials fix it:
+        self.asia_kill_zone_only = True    # only enter during 8–10 PM ET kill zone
+        self.asia_max_rr = 1.5            # let Asia winners run to 1.5R (was 1.0)
+        self.asia_require_macro_zone = True  # must be near prior-NY S/R zone
+
     # ──────────────────────────────────────────────────────────────────────
     @staticmethod
     def _et(index: pd.DatetimeIndex) -> pd.DatetimeIndex:
@@ -103,6 +109,11 @@ class MultiSessionStrategy(BaseStrategy):
             return self._state(ts, symbol, "paused", session=session, overlap=overlap,
                                reason="Volatility pause (first 5 min of kill zone)")
 
+        # ── Asia kill-zone gate: only trade 8–10 PM ET, not all night ──
+        if session.name == "ASIA" and self.asia_kill_zone_only and not kill:
+            return self._state(ts, symbol, "flat", session=session, overlap=overlap,
+                               reason="Asia: outside kill zone (8–10 PM ET) — standing down")
+
         # ── Current session instance bars (for VWAP/EMA reset) ──
         labels = mz.label_session_instances(et)
         cur_name, cur_inst = labels[-1]
@@ -121,6 +132,13 @@ class MultiSessionStrategy(BaseStrategy):
 
         # ── Section 2: macro zones from preceding session ──
         zones = mz.build_macro_zones(df, et, labels, session, cur_inst)
+
+        # ── Asia macro-zone gate: require prior-NY S/R confluence ──
+        if session.name == "ASIA" and self.asia_require_macro_zone:
+            has_zone = zones and (zones.resistance is not None or zones.support is not None)
+            if not has_zone:
+                return self._state(ts, symbol, "watching", session=session, overlap=overlap,
+                                   kill=kill, reason="Asia: no macro S/R zone — skipping mid-range entry")
 
         # ── Section 4, Indication 1 on candle n-1 (Heikin Ashi) ──
         ha_prev = ha.iloc[-2]
@@ -177,7 +195,9 @@ class MultiSessionStrategy(BaseStrategy):
             return self._state(ts, symbol, "watching", session=session, overlap=overlap,
                                reason="Invalid structural stop")
 
-        rr = session.max_rr  # 1.0 Asia (truncate) | 2.0 London/NY
+        # Asia gets a tunable R:R (default 1.5) — better than the original 1.0
+        # cap while still respecting Asia's tighter range vs London/NY's 2.0.
+        rr = self.asia_max_rr if session.name == "ASIA" else session.max_rr
         if bias == "long":
             t1 = entry + stop_dist          # 1:1
             t2 = entry + stop_dist * rr     # session R:R cap
