@@ -139,9 +139,9 @@ def main():
     ap.add_argument("--no-asia-kz-only", action="store_true",
                     help="allow Asia trades outside kill zone (reverts to original)")
     ap.add_argument("--asia-rr", type=float, default=2.0,
-                    help="Asia R:R target (default 1.5, original was 1.0)")
-    ap.add_argument("--no-asia-macro", action="store_true",
-                    help="allow Asia trades without macro zone confluence")
+                    help="Asia R:R target (default 2.0, validated by grid search)")
+    ap.add_argument("--asia-macro", action="store_true",
+                    help="require macro zone confluence for Asia entries (non-default)")
     args = ap.parse_args()
 
     print("=" * 66)
@@ -160,12 +160,12 @@ def main():
         sys.exit(0)
 
     print(f"  Asia tweaks: kill-zone-only={not args.no_asia_kz_only}  "
-          f"rr={args.asia_rr}  macro-zone={not args.no_asia_macro}")
+          f"rr={args.asia_rr}  macro-zone={args.asia_macro}")
     print()
     stats = simulate(df, args.symbol, args.session,
                      asia_kill_zone_only=not args.no_asia_kz_only,
                      asia_max_rr=args.asia_rr,
-                     asia_require_macro_zone=not args.no_asia_macro)
+                     asia_require_macro_zone=args.asia_macro)
     if "error" in stats:
         print(f"  No trades: {stats['error']}")
         sys.exit(0)
