@@ -59,6 +59,7 @@ def _status_from_outcome(outcome: str) -> str:
 
 def build_args(symbol: str, period: str, max_stop: float, account: float) -> SimpleNamespace:
     """The validated Config 3, as a namespace run_orb_backtest understands."""
+    from backend.config import settings
     return SimpleNamespace(
         symbol=symbol, period=period, interval="5m", account=account,
         strategy="orb", entry_mode="breakout", target_r=1.0,
@@ -67,6 +68,9 @@ def build_args(symbol: str, period: str, max_stop: float, account: float) -> Sim
         min_gap=1, no_trend=True, no_news=False, no_breakeven=False,
         contracts=1, size_to_budget=True, risk_per_trade=None, v2_filter=False,
         threshold=0.65, train_split=0.4,
+        # trading friction — must mirror the live engine's settings
+        commission=settings.COMMISSION_PER_SIDE,
+        slippage_ticks=settings.SLIPPAGE_TICKS,
     )
 
 
