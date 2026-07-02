@@ -26,6 +26,34 @@ HOST="${API_HOST:-0.0.0.0}"
 PORT="${API_PORT:-8000}"
 BACKOFF=5
 
+# launchd jobs get a bare PATH where `python3` is often Apple's
+# CommandLineTools build with no packages installed. Hunt for an interpreter
+# that can actually import uvicorn instead of trusting PATH. Override with
+# TAJARI_PYTHON=/path/to/python3 if needed.
+find_python() {
+  local p
+  for p in "${TAJARI_PYTHON:-}" \
+           /Library/Frameworks/Python.framework/Versions/*/bin/python3 \
+           /opt/homebrew/bin/python3 \
+           /usr/local/bin/python3 \
+           "$(command -v python3 2>/dev/null)"; do
+    if [ -n "$p" ] && [ -x "$p" ] && "$p" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
+      echo "$p"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PY="$(find_python)" || {
+  echo "[run_engine] FATAL: no python3 with uvicorn+fastapi found." \
+       "Install deps (pip3 install -r requirements.txt) or set TAJARI_PYTHON=/path/to/python3." \
+    | tee -a "logs/engine-$(date +%Y-%m-%d).log"
+  sleep 300   # throttle launchd's KeepAlive respawn so the log message repeats calmly
+  exit 1
+}
+echo "[run_engine] using python: $PY"
+
 # caffeinate exists on macOS only; run bare uvicorn elsewhere.
 RUNNER=""
 if command -v caffeinate >/dev/null 2>&1; then
@@ -38,7 +66,7 @@ while true; do
   LOG="logs/engine-$(date +%Y-%m-%d).log"
   echo "[run_engine] $(date '+%F %T') launching backend → ${LOG}"
   # shellcheck disable=SC2086
-  $RUNNER python3 -m uvicorn backend.main:app --host "$HOST" --port "$PORT" >>"$LOG" 2>&1
+  $RUNNER "$PY" -m uvicorn backend.main:app --host "$HOST" --port "$PORT" >>"$LOG" 2>&1
   CODE=$?
   echo "[run_engine] $(date '+%F %T') backend exited with code ${CODE} — restarting in ${BACKOFF}s" | tee -a "$LOG"
   sleep "$BACKOFF"
