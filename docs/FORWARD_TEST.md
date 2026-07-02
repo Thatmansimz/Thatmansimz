@@ -76,6 +76,47 @@ that's CTA/NFA registration territory.
 | Daily equity snapshots + uptime | `equity_snapshots` table | ✅ |
 | The engine process itself | run_engine.sh / launchd restarts it | ✅ |
 
+## Watchdog + phone alerts (strongly recommended)
+
+`scripts/watchdog.sh` checks the engine every 5 minutes — API up, scheduler
+running, last scan fresh. If the engine stops recording it fires a macOS
+notification, and (if configured) a **push notification to your phone**:
+
+1. Install the free **ntfy** app (iOS/Android), no account needed.
+2. In the app, subscribe to a topic nobody would guess, e.g.
+   `tajari-mike-x7k2q`.
+3. Add that topic to `.env`:
+   ```
+   NTFY_TOPIC=tajari-mike-x7k2q
+   ```
+4. Install both launchd jobs (engine + watchdog) — replace REPO_PATH first
+   or use the sed one-liner:
+   ```bash
+   sed "s|REPO_PATH|$HOME/Thatmansimz|g" deploy/com.tajari.engine.plist   > ~/Library/LaunchAgents/com.tajari.engine.plist
+   sed "s|REPO_PATH|$HOME/Thatmansimz|g" deploy/com.tajari.watchdog.plist > ~/Library/LaunchAgents/com.tajari.watchdog.plist
+   launchctl load ~/Library/LaunchAgents/com.tajari.engine.plist
+   launchctl load ~/Library/LaunchAgents/com.tajari.watchdog.plist
+   ```
+
+Alert policy: first alert after ~10 minutes down (so the supervisor's own
+quick restarts don't spam you), reminders every ~30 minutes while down, one
+"RECOVERED" note when it's back. Test it anytime:
+`bash scripts/watchdog.sh` (should print nothing and exit clean when healthy).
+
+## Protect-the-60-days checklist (Mac settings)
+
+- **Power**: keep the Mac plugged in, lid open. The engine wraps itself in
+  `caffeinate` so the system won't sleep while it runs (display sleep is fine).
+- **Updates**: System Settings → General → Software Update → ⓘ → turn OFF
+  "Install macOS updates automatically" (surprise reboots are the enemy;
+  install updates manually at a time you choose — launchd restarts the
+  engine after any reboot once you log in).
+- **After any reboot**: just log in. launchd starts the engine + watchdog
+  automatically at login.
+- **Guard rails in code**: while the campaign is active, the replay/reset
+  endpoints refuse to touch the trades table (HTTP 409) unless called with
+  `?force=true` — so a stray click can't erase the record.
+
 ## The rules while it runs
 
 1. **Don't touch the strategy.** No parameter tweaks, no "small improvements".

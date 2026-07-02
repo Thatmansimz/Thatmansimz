@@ -815,7 +815,11 @@ export default function Dashboard() {
     if (!confirm("Clear all paper forward-test trades?")) return;
     setFwRunning(true);
     try {
-      await fetch(`${API}/api/forward-test/reset`, { method: "POST" });
+      const res = await fetch(`${API}/api/forward-test/reset`, { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail ?? "Reset refused.");
+      }
       await load();
     } finally { setFwRunning(false); }
   }

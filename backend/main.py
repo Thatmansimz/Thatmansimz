@@ -579,13 +579,32 @@ async def forward_test_begin(target_days: int = 0, db: Session = Depends(get_db)
     return campaign_status(db)
 
 
+def _guard_campaign(force: bool):
+    """
+    Replay/reset endpoints rewrite the trades table. While the 60-day live
+    campaign is running that would corrupt the audited track record, so they
+    refuse unless explicitly forced.
+    """
+    from backend.services.forward_test import get_campaign
+    if get_campaign() is not None and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "60-day forward-test campaign is ACTIVE — this would corrupt the "
+                "audited track record. If you truly intend to abandon the campaign, "
+                "call again with ?force=true."
+            ),
+        )
+
+
 @app.post("/api/forward-test/run")
-async def forward_test_run(period: str = "30d", db: Session = Depends(get_db)):
+async def forward_test_run(period: str = "30d", force: bool = False, db: Session = Depends(get_db)):
     """
     Replay the validated ORB edge over recent data and record the results as
     paper trades, so the Insights panel / charts fill immediately. Stage 1 of
     the plan — zero money at risk. Requires market-data access on the host.
     """
+    _guard_campaign(force)
     try:
         from scripts.forward_test import run_forward_test
     except Exception as exc:
@@ -603,8 +622,9 @@ async def forward_test_run(period: str = "30d", db: Session = Depends(get_db)):
 
 
 @app.post("/api/forward-test/reset")
-async def forward_test_reset(db: Session = Depends(get_db)):
+async def forward_test_reset(force: bool = False, db: Session = Depends(get_db)):
     """Clear paper forward-test trades (leaves any real trades untouched)."""
+    _guard_campaign(force)
     from scripts.forward_test import reset_forward_trades, rebuild_daily_stats
     cleared = reset_forward_trades(db)
     rebuild_daily_stats(db, settings.PROP_FIRM_ACCOUNT_SIZE)

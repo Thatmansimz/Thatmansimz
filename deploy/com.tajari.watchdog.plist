@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job: Tajari engine watchdog (macOS).
+  Runs scripts/watchdog.sh every 5 minutes — alerts (Mac notification +
+  optional ntfy.sh phone push) if the engine stops recording.
+
+  Install (replace REPO_PATH with your absolute repo path first):
+    cp deploy/com.tajari.watchdog.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.tajari.watchdog.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tajari.watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPO_PATH/scripts/watchdog.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>REPO_PATH</string>
+
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>REPO_PATH/logs/watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPO_PATH/logs/watchdog.log</string>
+</dict>
+</plist>
