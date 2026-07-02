@@ -23,6 +23,8 @@ _scheduler_state = {
     "cycles_today": 0,
     "signals_today": 0,
     "current_symbols": [],
+    "started_at": None,
+    "cycle_date": None,  # ET date the daily counters belong to
 }
 
 
@@ -62,6 +64,7 @@ class TradingScheduler:
             return
         self._running = True
         _scheduler_state["running"] = True
+        _scheduler_state["started_at"] = datetime.now(ET).isoformat()
         self._task = asyncio.create_task(self._loop())
         logger.info("Trading scheduler started")
 
@@ -85,7 +88,19 @@ class TradingScheduler:
             await asyncio.sleep(self._cycle_interval_seconds)
 
     async def _cycle(self):
-        _scheduler_state["last_cycle"] = datetime.now(ET).isoformat()
+        now_et = datetime.now(ET)
+
+        # Daily rollover: reset per-day counters at the ET date change.
+        # Without this, cycles_today/signals_today accumulate for the entire
+        # 60-day run and the risk manager's daily P&L never resets.
+        today_key = now_et.date().isoformat()
+        if _scheduler_state.get("cycle_date") != today_key:
+            _scheduler_state["cycle_date"] = today_key
+            _scheduler_state["cycles_today"] = 0
+            _scheduler_state["signals_today"] = 0
+            self.risk_manager.reset_daily()
+
+        _scheduler_state["last_cycle"] = now_et.isoformat()
         _scheduler_state["cycles_today"] = _scheduler_state.get("cycles_today", 0) + 1
 
         # Monitor open positions every cycle
@@ -93,6 +108,13 @@ class TradingScheduler:
             await self.execution.monitor_positions()
         except Exception as exc:
             logger.error("Position monitor error: %s", exc)
+
+        # Forward-test heartbeat: upsert today's equity snapshot every cycle so
+        # the 60-day track record survives restarts and gaps stay visible.
+        try:
+            await self._record_equity_snapshot()
+        except Exception as exc:
+            logger.error("Equity snapshot error: %s", exc)
 
         # Check if we can open new trades
         db = SessionLocal()
@@ -113,6 +135,32 @@ class TradingScheduler:
             _scheduler_state["scan_status"] = "scanning"
             for symbol in settings.SYMBOLS:
                 await self._scan_symbol(symbol, db, today_stats)
+        finally:
+            db.close()
+
+    async def _record_equity_snapshot(self):
+        from backend.services.forward_test import record_snapshot
+        try:
+            acct = await self.execution.broker.get_account()
+            balance = float(acct.get("balance", 0.0))
+            equity = float(acct.get("equity", balance))
+            unrealized = float(acct.get("unrealized_pnl", 0.0))
+        except Exception:
+            # Broker unreachable — fall back to the DB account row so the
+            # heartbeat still ticks.
+            db = SessionLocal()
+            try:
+                from backend.models.account import Account
+                row = db.query(Account).first()
+                balance = row.balance if row else 0.0
+                equity = row.equity if row else balance
+                unrealized = 0.0
+            finally:
+                db.close()
+
+        db = SessionLocal()
+        try:
+            record_snapshot(db, balance, equity, unrealized)
         finally:
             db.close()
 

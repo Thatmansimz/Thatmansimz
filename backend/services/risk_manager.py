@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
 
 import pytz
@@ -51,8 +51,24 @@ class RiskManager:
         close_time = now.replace(hour=16, minute=0, second=0, microsecond=0)
         return open_time <= now <= close_time
 
+    def _futures_clock(self) -> bool:
+        """
+        24/5 strategies (V2 multi_session) run on the futures clock, where the
+        daily "close" is the 17:00 ET CME maintenance halt — NOT the 16:00
+        equity close. Using the equity clock here silently blocked ALL trading
+        after 3:55 PM ET (minutes_until_close hit 0), which killed the entire
+        Asia kill zone (8–10 PM ET) and instantly force-closed any overnight
+        position as "end_of_day".
+        """
+        return getattr(self.config, "STRATEGY", "").lower() == "multi_session"
+
     def minutes_until_close(self) -> int:
         now = datetime.now(ET)
+        if self._futures_clock():
+            close = now.replace(hour=17, minute=0, second=0, microsecond=0)
+            if now >= close:
+                close += timedelta(days=1)
+            return max(0, int((close - now).total_seconds() / 60))
         close = now.replace(hour=16, minute=0, second=0, microsecond=0)
         return max(0, int((close - now).total_seconds() / 60))
 
@@ -63,6 +79,8 @@ class RiskManager:
         if mins_to_close < 5:
             return True, "Too close to market close"
 
+        # First-5-minutes guard applies to the 9:30 NY open. V2 sessions have
+        # their own volatility pauses, so this only guards the NY cash open.
         market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
         mins_since_open = (now - market_open).total_seconds() / 60
         if 0 < mins_since_open < 5:
@@ -238,6 +256,11 @@ class RiskManager:
         self._session_high_pnl = max(self._session_high_pnl, self._daily_realized_pnl)
 
     def reset_daily(self):
+        # Daily P&L tracking resets at the ET date change. The active trade
+        # count deliberately does NOT reset — V2 positions can be held across
+        # midnight, and the count self-heals from the DB every monitor cycle.
         self._daily_realized_pnl = 0.0
         self._session_high_pnl = 0.0
-        self._active_trade_count = 0
+
+    def sync_active_trades(self, count: int):
+        self._active_trade_count = max(0, count)

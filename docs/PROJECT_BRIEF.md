@@ -141,6 +141,15 @@ by profit factor and expectancy, not win rate.
    flags/defaults must always match the strategy's validated defaults
    (kill-zone-only=True, rr=2.0, macro=False). This drifted once and produced
    confusing results; it's fixed, but check it whenever the strategy is tuned.
+5. **Equity-clock kill switch** — the risk manager's "minutes until close"
+   used the 4 PM ET stock close, so after 3:55 PM ET all trading was blocked
+   and any open position was force-closed as "end_of_day". Invisible for the
+   NY-only ORB strategy, fatal for V2's overnight sessions. multi_session now
+   uses the futures clock (5 PM ET daily halt).
+6. **In-memory paper account** — balance and open positions used to live in
+   process memory; any restart silently reset the account to $50k and
+   orphaned open trades. Now persisted to `data/paper_state.json`, and
+   `Account.balance` moves on every trade close.
 
 ## Dashboard concepts (frontend/src/app/page.tsx)
 
@@ -171,15 +180,41 @@ DAILY_PROFIT_TARGET_DOLLARS=1000
 NEWS_FILTER_ENABLED=true
 ```
 
-## Current status & next steps
+## The 60-day forward-test campaign (current mission)
 
-- **Tonight**: V2 is being forward-tested live (paper) on MNQ across all three
-  sessions. Asia kill zone 8–10 PM ET, London 4–6 AM ET, NY 9:30–11:30 AM ET.
-- **Pending**: populate `data/news_calendar.json` with real ForexFactory
-  red-folder events (it's a placeholder); grow the live sample size before
-  trusting the Asia edge (+$27 on 11 trades is thin); consider a suggested
-  MES/MNQ size split on the By Instrument card once there's more data.
+The project's verdict was accepted: the backtest is directional evidence, not
+proof. The mission now is a **60-day untouched live paper forward test** with
+an audited track record. Everything below was built for it:
+
+- **Friction is modeled everywhere**: $1.50/side/contract commission and
+  1-tick adverse slippage on entries + stop exits (`COMMISSION_PER_SIDE`,
+  `SLIPPAGE_TICKS` in config, shared logic in `backend/services/costs.py`).
+  Applies to live paper fills AND both backtesters, so they stay comparable.
+- **Restart-proof state**: paper balance + open positions persist to
+  `data/paper_state.json`; the campaign start date to
+  `data/forward_test.json`; daily equity + uptime heartbeat to the
+  `equity_snapshots` table. A restart never wipes the record.
+- **Campaign tracker**: auto-starts the first time the engine boots armed.
+  `GET /api/forward-test/status` → day X/60, equity curve, uptime, trade
+  record. The dashboard shows a FORWARD TEST card with a progress bar.
+- **Supervised runtime**: `scripts/run_engine.sh` (auto-restart + caffeinate,
+  no --reload) and `deploy/com.tajari.engine.plist` (launchd service).
+  Full runbook: **docs/FORWARD_TEST.md** — read it before touching anything.
+- **Futures clock fix**: the risk manager previously used the 4 PM ET equity
+  close, which blocked ALL trading after 3:55 PM and instantly force-closed
+  overnight positions — fatal for V2's Asia kill zone. multi_session now runs
+  on the futures clock (daily 5 PM ET halt).
+
+**The rules while it runs**: no strategy tweaks, no resets, no "small
+improvements" — any logic change restarts the track record. Judge the result
+at day 60 by profit factor / expectancy / max drawdown, not win rate. If it
+survives, the path to capital is a prop-firm eval (~$50–150, Apex/TraderFi
+allow automation; TopStep does not), budgeted as 2–3 attempts. No selling
+signals/access before a long audited record (CTA/NFA territory).
+
+## Other pending items
+
+- Populate `data/news_calendar.json` with real ForexFactory red-folder events.
+- The Asia edge (+$27 on 11 trades) is statistical noise until the live
+  sample grows — the forward test is what settles it.
 - **Branch**: all work lives on `claude/ai-day-trading-platform-E61dn`.
-- **Important caveat**: backtests use yfinance 5-min bars with conservative
-  stop-first intrabar assumptions, but no slippage/commissions are modeled
-  yet. Treat backtest P&L as directional, not exact.

@@ -60,6 +60,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--v2-filter", action="store_true",
                         help="Layer the V2 two-indications filter on top of the ORB signal "
                              "(HA flat-candle velocity break + total-engulfing confirmation)")
+    # ── Trading friction ──
+    parser.add_argument("--commission", type=float, default=1.50,
+                        help="commission $/contract/side (default 1.50 → $3.00 round trip)")
+    parser.add_argument("--slippage-ticks", type=int, default=1,
+                        help="ticks of adverse slippage on entries and stop exits (default 1)")
     return parser.parse_args()
 
 
@@ -143,14 +148,15 @@ def run_backtest(
         close = float(bar["close"])
         atr = float(bar.get("atr", close * 0.002))
 
+        from backend.services.costs import slip_entry
         if pred["direction"] == "long":
-            entry = close
-            stop = entry - atr * 1.5
-            target = entry + atr * 3.0
+            stop = close - atr * 1.5
+            target = close + atr * 3.0
         else:
-            entry = close
-            stop = entry + atr * 1.5
-            target = entry - atr * 3.0
+            stop = close + atr * 1.5
+            target = close - atr * 3.0
+        # Bracket is set from the signal price; the entry itself fills with slippage.
+        entry = slip_entry(symbol, pred["direction"], close, args.slippage_ticks)
 
         stop_dist = abs(entry - stop)
         risk_dollars = stop_dist * point_value
@@ -172,6 +178,7 @@ def run_backtest(
             future_high = float(df.iloc[idx]["high"])
             future_low = float(df.iloc[idx]["low"])
 
+            from backend.services.costs import slip_stop_exit
             if pred["direction"] == "long":
                 if future_high >= target:
                     outcome = "win"
@@ -179,7 +186,7 @@ def run_backtest(
                     break
                 if future_low <= stop:
                     outcome = "loss"
-                    exit_price = stop
+                    exit_price = slip_stop_exit(symbol, "long", stop, args.slippage_ticks)
                     break
             else:
                 if future_low <= target:
@@ -188,7 +195,7 @@ def run_backtest(
                     break
                 if future_high >= stop:
                     outcome = "loss"
-                    exit_price = stop
+                    exit_price = slip_stop_exit(symbol, "short", stop, args.slippage_ticks)
                     break
 
         if pred["direction"] == "long":
@@ -196,7 +203,8 @@ def run_backtest(
         else:
             pnl = (entry - exit_price) * point_value
 
-        pnl -= 2.0  # commission estimate per contract
+        from backend.services.costs import round_trip_commission
+        pnl -= round_trip_commission(1, args.commission)
 
         equity += pnl
         daily_pnl[date_str] += pnl
@@ -401,13 +409,17 @@ def run_orb_backtest(
         target = signal["target_1"]
         taken_today[date_str].add(direction)
 
-        # Position sizing — how many contracts for this trade
+        # Position sizing — from the SIGNAL price (that's all you know pre-fill)
         per_contract_risk = abs(entry - stop) * point_value
         if args.size_to_budget and per_contract_risk > 0:
             budget = args.risk_per_trade if args.risk_per_trade else args.max_stop
             contracts = max(1, int(budget / per_contract_risk))
         else:
             contracts = max(1, args.contracts)
+
+        # The entry itself is a market order — fill with adverse slippage.
+        from backend.services.costs import slip_entry, slip_stop_exit
+        entry = slip_entry(symbol, direction, entry, args.slippage_ticks)
 
         risk = abs(entry - stop)
         be_level = entry + risk if direction == "long" else entry - risk  # +1R
@@ -438,7 +450,8 @@ def run_orb_backtest(
                     outcome, exit_price, exit_bar = "win", target, idx; break
                 if flow <= stop:
                     outcome = "breakeven" if moved_to_be else "loss"
-                    exit_price, exit_bar = stop, idx; break
+                    exit_price = slip_stop_exit(symbol, "long", stop, args.slippage_ticks)
+                    exit_bar = idx; break
             else:
                 if use_breakeven and not moved_to_be and flow <= be_level:
                     stop = entry
@@ -447,13 +460,15 @@ def run_orb_backtest(
                     outcome, exit_price, exit_bar = "win", target, idx; break
                 if fhigh >= stop:
                     outcome = "breakeven" if moved_to_be else "loss"
-                    exit_price, exit_bar = stop, idx; break
+                    exit_price = slip_stop_exit(symbol, "short", stop, args.slippage_ticks)
+                    exit_bar = idx; break
 
         if direction == "long":
             pnl = (exit_price - entry) * point_value * contracts
         else:
             pnl = (entry - exit_price) * point_value * contracts
-        pnl -= 2.0 * contracts  # commission scales with size
+        from backend.services.costs import round_trip_commission
+        pnl -= round_trip_commission(contracts, args.commission)
 
         equity += pnl
         daily_pnl[date_str] += pnl

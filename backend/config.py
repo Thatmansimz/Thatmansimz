@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_TRADES: int = 3
     RISK_PER_TRADE_PERCENT: float = 1.0
 
+    # Trading friction (applied to paper fills AND backtests so P&L is honest)
+    COMMISSION_PER_SIDE: float = 1.50   # $/contract per side → $3.00 round trip
+    SLIPPAGE_TICKS: int = 1             # ticks of adverse fill on entry + stop exits
+
+    # Forward-test campaign length (days) for the live paper track record
+    FORWARD_TEST_TARGET_DAYS: int = 60
+
     # Database
     DATABASE_URL: str = "sqlite:///./data/trading.db"
 

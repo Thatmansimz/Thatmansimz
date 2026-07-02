@@ -29,12 +29,15 @@ import pandas as pd
 from backend.strategies.v2 import MultiSessionStrategy
 from backend.strategies.v2 import sessions as S
 from backend.strategies.v2.strategy import SPECS
+from backend.services.costs import slip_entry, slip_stop_exit, round_trip_commission
 
 
 def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
              asia_kill_zone_only: bool = True,
              asia_max_rr: float = 2.0,
-             asia_require_macro_zone: bool = False) -> dict:
+             asia_require_macro_zone: bool = False,
+             commission_per_side: float = 1.50,
+             slippage_ticks: int = 1) -> dict:
     strat = MultiSessionStrategy()
     strat.asia_kill_zone_only = asia_kill_zone_only
     strat.asia_max_rr = asia_max_rr
@@ -56,19 +59,24 @@ def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
         if open_pos:
             d = open_pos
             exited = False
-            # stop / target checks (intrabar, stop-first conservative)
+            # stop / target checks (intrabar, stop-first conservative).
+            # Stops fill through the level with slippage (market order);
+            # targets fill at price (resting limit).
             if d["dir"] == "long":
                 if lo <= d["stop"]:
-                    pnl = (d["stop"] - d["entry"]) * pv * d["contracts"]; exited = True
+                    fill = slip_stop_exit(symbol, "long", d["stop"], slippage_ticks)
+                    pnl = (fill - d["entry"]) * pv * d["contracts"]; exited = True
                 elif hi >= d["t2"]:
                     pnl = (d["t2"] - d["entry"]) * pv * d["contracts"]; exited = True
             else:
                 if hi >= d["stop"]:
-                    pnl = (d["entry"] - d["stop"]) * pv * d["contracts"]; exited = True
+                    fill = slip_stop_exit(symbol, "short", d["stop"], slippage_ticks)
+                    pnl = (d["entry"] - fill) * pv * d["contracts"]; exited = True
                 elif lo <= d["t2"]:
                     pnl = (d["entry"] - d["t2"]) * pv * d["contracts"]; exited = True
 
             if exited:
+                pnl -= round_trip_commission(d["contracts"], commission_per_side)
                 trades.append({"pnl": pnl, "session": d["session"], "dir": d["dir"]})
                 open_pos = None
             else:
@@ -92,11 +100,13 @@ def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
             continue
         if only_session and sig["session"] != only_session:
             continue
-        risk_pts = abs(sig["entry_price"] - sig["stop_loss"])
+        # Entry is a market order — fill with adverse slippage.
+        entry_fill = slip_entry(symbol, sig["direction"], sig["entry_price"], slippage_ticks)
+        risk_pts = abs(entry_fill - sig["stop_loss"])
         if risk_pts <= 0:
             continue
         open_pos = {
-            "entry": sig["entry_price"], "stop": sig["stop_loss"], "t2": sig["target_2"],
+            "entry": entry_fill, "stop": sig["stop_loss"], "t2": sig["target_2"],
             "dir": sig["direction"], "contracts": sig["contracts"], "risk_pts": risk_pts,
             "session": sig["session"],
         }
@@ -142,6 +152,10 @@ def main():
                     help="Asia R:R target (default 2.0, validated by grid search)")
     ap.add_argument("--asia-macro", action="store_true",
                     help="require macro zone confluence for Asia entries (non-default)")
+    ap.add_argument("--commission", type=float, default=1.50,
+                    help="commission $/contract/side (default 1.50 → $3.00 round trip)")
+    ap.add_argument("--slippage-ticks", type=int, default=1,
+                    help="ticks of adverse slippage on entries and stop exits (default 1)")
     args = ap.parse_args()
 
     print("=" * 66)
@@ -161,11 +175,15 @@ def main():
 
     print(f"  Asia tweaks: kill-zone-only={not args.no_asia_kz_only}  "
           f"rr={args.asia_rr}  macro-zone={args.asia_macro}")
+    print(f"  Friction   : ${args.commission:.2f}/side commission, "
+          f"{args.slippage_ticks}-tick slippage on entries + stop exits")
     print()
     stats = simulate(df, args.symbol, args.session,
                      asia_kill_zone_only=not args.no_asia_kz_only,
                      asia_max_rr=args.asia_rr,
-                     asia_require_macro_zone=args.asia_macro)
+                     asia_require_macro_zone=args.asia_macro,
+                     commission_per_side=args.commission,
+                     slippage_ticks=args.slippage_ticks)
     if "error" in stats:
         print(f"  No trades: {stats['error']}")
         sys.exit(0)

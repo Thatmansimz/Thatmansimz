@@ -24,6 +24,7 @@ type Status = {
   scheduler_running: boolean;
   broker: string;
   prop_firm: string;
+  strategy?: string;
   daily_target: number;
   max_stop_dollars: number;
   ai_threshold: number;
@@ -64,6 +65,19 @@ type Perf = {
 type Bucket = {
   trades: number; wins: number; losses: number; win_rate: number;
   pnl: number; avg_win: number; avg_loss: number; payoff: number; expectancy: number;
+};
+type FwtSnapshot = {
+  date: string; balance: number; equity: number;
+  unrealized_pnl: number; cycles: number; uptime_pct: number;
+};
+type ForwardTest = {
+  active: boolean;
+  start_date?: string; strategy?: string; symbols?: string[];
+  day?: number; target_days?: number; days_remaining?: number; pct_complete?: number;
+  start_equity?: number; current_equity?: number; total_pnl?: number;
+  trades_closed?: number; wins?: number; losses?: number; win_rate?: number;
+  uptime_today_pct?: number;
+  snapshots?: FwtSnapshot[];
 };
 type Insights = {
   total_trades: number;
@@ -207,13 +221,16 @@ function fmtMins(m?: number | null): string {
 
 function EngineStatePill({ status }: { status?: Status | null }) {
   // DISARMED  — trading off (engine watching only, no trades possible)
-  // LIVE      — trading on AND inside the ORB window (9:35–14:00 ET): taking trades
-  // ARMED     — trading on but outside the window: watching, waiting for NY open
+  // LIVE      — trading on AND inside the strategy's trade window: taking trades
+  // ARMED     — trading on but outside the window: watching, waiting
+  const v2 = status?.strategy === "multi_session";
   let label = "DISARMED", color = "#475569", pulse = false, title = "Trading is off. Click START TRADING to arm the engine.";
   if (status?.trading_enabled) {
     if (status?.orb_window_active) {
       label = "LIVE"; color = "#00ff88"; pulse = true;
-      title = "ORB window is open (9:35–14:00 ET) — the engine is actively taking paper trades.";
+      title = v2
+        ? "A V2 trade window is open (Asia kill zone / London / NY) — the engine is actively taking paper trades."
+        : "ORB window is open (9:35–14:00 ET) — the engine is actively taking paper trades.";
     } else if (status?.orb_after_cutoff) {
       // Past 14:00 ET today — done trading for the day, NY session still open
       const eta = fmtMins(status?.orb_opens_in_min);
@@ -221,11 +238,12 @@ function EngineStatePill({ status }: { status?: Status | null }) {
       color = "#ffaa00";
       title = "ORB entry window closed at 14:00 ET. Done trading for today — engine re-arms tomorrow at 9:35 AM ET.";
     } else {
-      // Before 9:35 AM ET — waiting for the session to start
       const eta = fmtMins(status?.orb_opens_in_min);
-      label = eta ? `ARMED · OPENS IN ${eta}` : "ARMED";
+      label = eta ? `ARMED · ${v2 ? "NEXT WINDOW" : "OPENS IN"} ${eta}` : "ARMED";
       color = "#ffaa00";
-      title = "Engine armed. ORB window opens at 9:35 AM ET — idle through Asia/London by design.";
+      title = v2
+        ? "Engine armed. Between V2 trade windows — next one is the Asia kill zone (8 PM ET), London (4 AM ET), or NY (9 AM ET)."
+        : "Engine armed. ORB window opens at 9:35 AM ET — idle through Asia/London by design.";
     }
   }
   return (
@@ -605,6 +623,107 @@ function SectionHeader({ title, sub }: { title: string; sub?: string }) {
   );
 }
 
+/* ── 60-day forward-test campaign tracker ── */
+function ForwardTestCard({ fwt }: { fwt: ForwardTest | null }) {
+  if (!fwt?.active) return null;
+  const day = fwt.day ?? 1;
+  const target = fwt.target_days ?? 60;
+  const pct = Math.min(100, fwt.pct_complete ?? 0);
+  const pnl = fwt.total_pnl ?? 0;
+  const pnlColor = pnl >= 0 ? "#00ff88" : "#ff3366";
+  const uptime = fwt.uptime_today_pct ?? 0;
+  const uptimeColor = uptime >= 90 ? "#00ff88" : uptime >= 50 ? "#ffaa00" : "#ff3366";
+  const curve = (fwt.snapshots ?? []).map((s) => ({ date: s.date, equity: s.equity }));
+
+  return (
+    <div className="glass-bright rounded-2xl p-5">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <div className="flex items-center gap-3">
+          <span className="font-display text-xs font-bold tracking-[0.3em] uppercase" style={{ color: "#00d4ff" }}>
+            ◆ Forward Test · {target}-Day Track Record
+          </span>
+          <span
+            className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
+            style={{ background: "#7c3aed22", border: "1px solid #7c3aed44", color: "#a78bfa" }}
+            title={`Campaign started ${fwt.start_date}. The start date never moves — that's what makes this an audited record.`}
+          >
+            DAY {day} / {target}
+          </span>
+          {fwt.strategy && (
+            <span className="text-[9px] font-mono-hud tracking-widest uppercase" style={{ color: "#475569" }}>
+              {fwt.strategy} · {(fwt.symbols ?? []).join(" + ")}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-4 text-[10px] font-mono-hud">
+          <span style={{ color: "#475569" }}>
+            since {fwt.start_date} · uptime today{" "}
+            <span style={{ color: uptimeColor, fontWeight: 700 }}>{uptime.toFixed(0)}%</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Day progress bar */}
+      <div className="h-2 rounded-full overflow-hidden mb-4" style={{ background: "#0a1525" }}>
+        <div
+          style={{
+            width: `${pct}%`, height: "100%",
+            background: "linear-gradient(90deg,#7c3aed,#00d4ff)",
+            boxShadow: "0 0 8px #00d4ff",
+            borderRadius: "9999px",
+            transition: "width 0.8s ease",
+          }}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="rounded-xl py-3 px-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+          <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>Campaign P&L</p>
+          <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: pnlColor, textShadow: `0 0 12px ${pnlColor}88` }}>
+            {pnl >= 0 ? "+" : ""}${pnl.toFixed(0)}
+          </p>
+        </div>
+        <div className="rounded-xl py-3 px-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+          <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>Equity</p>
+          <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: "#00d4ff" }}>
+            ${(fwt.current_equity ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div className="rounded-xl py-3 px-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+          <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>Trades · Win Rate</p>
+          <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: "#a78bfa" }}>
+            {fwt.trades_closed ?? 0} · {(fwt.win_rate ?? 0).toFixed(0)}%
+          </p>
+        </div>
+        <div className="rounded-xl py-2 px-2" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+          {curve.length > 1 ? (
+            <ResponsiveContainer width="100%" height={56}>
+              <AreaChart data={curve} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="fwtGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <YAxis hide domain={["dataMin", "dataMax"]} />
+                <Tooltip
+                  contentStyle={{ background: "#0d1525", border: "1px solid #1a2d4a", borderRadius: 10, fontSize: 10, fontFamily: "JetBrains Mono" }}
+                  formatter={(v: number) => [`$${v.toFixed(0)}`, "equity"]}
+                />
+                <Area type="monotone" dataKey="equity" stroke="#a78bfa" strokeWidth={1.5} fill="url(#fwtGrad)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex items-center justify-center text-[9px] font-mono-hud" style={{ color: "#334155" }}>
+              EQUITY CURVE BUILDS DAILY
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [status,       setStatus]       = useState<Status | null>(null);
   const [todayStats,   setTodayStats]   = useState<Stats | null>(null);
@@ -614,6 +733,7 @@ export default function Dashboard() {
   const [perf,         setPerf]         = useState<Perf | null>(null);
   const [insights,     setInsights]     = useState<Insights | null>(null);
   const [dailyHistory, setDailyHistory] = useState<{ date: string; pnl: number }[]>([]);
+  const [fwt,          setFwt]          = useState<ForwardTest | null>(null);
   const [trading,      setTrading]      = useState(false);
   const [closing,      setClosing]      = useState(false);
   const [fwRunning,    setFwRunning]    = useState(false);
@@ -621,11 +741,11 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     try {
-      const [s, t, tr, sg, ps, pf, dh, ins] = await Promise.allSettled([
+      const [s, t, tr, sg, ps, pf, dh, ins, fw] = await Promise.allSettled([
         api("/api/status"), api("/api/stats/today"), api("/api/trades/today"),
         api("/api/signals?limit=10"), api("/api/prop-firm/status"),
         api("/api/stats/performance"), api("/api/stats/daily"),
-        api("/api/stats/insights"),
+        api("/api/stats/insights"), api("/api/forward-test/status"),
       ]);
       if (s.status  === "fulfilled") setStatus(s.value);
       if (t.status  === "fulfilled") setTodayStats(t.value);
@@ -635,6 +755,7 @@ export default function Dashboard() {
       if (pf.status === "fulfilled") setPerf(pf.value);
       if (dh.status === "fulfilled") setDailyHistory(dh.value.slice(0, 30).reverse());
       if (ins.status === "fulfilled") setInsights(ins.value);
+      if (fw.status === "fulfilled") setFwt(fw.value);
     } catch (_) {}
   }, []);
 
@@ -820,7 +941,7 @@ export default function Dashboard() {
                     className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
                     style={{ background: "#00ff8822", border: "1px solid #00ff8844", color: "#00ff88", animation: "green-pulse 2s infinite" }}
                   >
-                    LIVE · NY SESSION
+                    {status?.strategy === "multi_session" ? "LIVE · SESSION WINDOW" : "LIVE · NY SESSION"}
                   </span>
                 ) : status?.orb_after_cutoff ? (
                   <span
@@ -834,9 +955,11 @@ export default function Dashboard() {
                   <span
                     className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
                     style={{ background: "#ffaa0018", border: "1px solid #ffaa0044", color: "#ffaa00" }}
-                    title="Engine armed — ORB window opens at 9:35 AM ET."
+                    title={status?.strategy === "multi_session"
+                      ? "Engine armed — waiting for the next V2 window (Asia kill zone 8 PM / London 4 AM / NY 9 AM ET)."
+                      : "Engine armed — ORB window opens at 9:35 AM ET."}
                   >
-                    ARMED · WAITING FOR ORB OPEN
+                    {status?.strategy === "multi_session" ? "ARMED · NEXT WINDOW SOON" : "ARMED · WAITING FOR ORB OPEN"}
                   </span>
                 )
               )}
@@ -914,6 +1037,9 @@ export default function Dashboard() {
             <MaxStopControl value={status?.max_stop_dollars ?? 250} onCommit={saveMaxStop} />
           </div>
         </div>
+
+        {/* ── 60-Day Forward Test ── */}
+        <ForwardTestCard fwt={fwt} />
 
         {/* ── Prop Firm Progress ── */}
         {propStatus && propStatus.firm !== "None" && (
@@ -997,10 +1123,14 @@ export default function Dashboard() {
                 <p className="text-xs font-mono-hud tracking-widest" style={{ color: "#1a2d4a" }}>
                   {status?.trading_enabled
                     ? status?.orb_window_active
-                      ? "WATCHING FOR ORB SETUP..."
+                      ? status?.strategy === "multi_session"
+                        ? "WATCHING FOR TWO-INDICATIONS SETUP..."
+                        : "WATCHING FOR ORB SETUP..."
                       : status?.orb_after_cutoff
                         ? "ORB CUTOFF · DONE FOR TODAY · RE-ARMS 9:35 AM ET"
-                        : "ARMED · ORB OPENS AT 9:35 AM ET"
+                        : status?.strategy === "multi_session"
+                          ? "ARMED · NEXT WINDOW: ASIA 8PM / LONDON 4AM / NY 9AM ET"
+                          : "ARMED · ORB OPENS AT 9:35 AM ET"
                     : "ENGINE NOT ARMED · CLICK START TRADING"}
                 </p>
               </div>

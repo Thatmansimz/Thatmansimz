@@ -62,6 +62,57 @@ def _orb_window_status() -> dict:
     return {"active": active, "after_cutoff": after_cutoff, "opens_in_min": opens_in}
 
 
+def _v2_window_status() -> dict:
+    """
+    Trade-window status for the V2 multi-session engine (STRATEGY=multi_session).
+
+    V2 trades the full London (4:00–12:00 ET) and NY (9:00–18:00 ET) sessions,
+    but Asia ONLY inside its 8–10 PM ET kill zone. Futures are closed
+    Fri 5 PM → Sun 6 PM ET. The dashboard pill uses this to show
+    LIVE (a tradeable window is open) vs ARMED (waiting for the next one).
+    """
+    import pytz
+    from datetime import time as dtime, timedelta
+    from backend.strategies.v2 import sessions as S
+
+    ET = pytz.timezone("America/New_York")
+
+    def tradeable(dt) -> bool:
+        wd = dt.weekday()
+        if wd == 5:  # Saturday
+            return False
+        if wd == 4 and dt.time() >= dtime(17, 0):  # Friday after 5 PM
+            return False
+        if wd == 6 and dt.time() < dtime(18, 0):   # Sunday before 6 PM
+            return False
+        sess = S.active_session(dt)
+        if sess is None:
+            return False
+        if sess.name == "ASIA" and not S.in_kill_zone(dt, sess):
+            return False
+        return True
+
+    now = datetime.now(ET)
+    active = tradeable(now)
+    opens_in = None
+    if not active:
+        probe = now.replace(second=0, microsecond=0)
+        for i in range(1, 7 * 24 * 60):  # scan up to a week ahead
+            probe_t = probe + timedelta(minutes=i)
+            if tradeable(probe_t):
+                opens_in = i
+                break
+
+    return {"active": active, "after_cutoff": False, "opens_in_min": opens_in}
+
+
+def _trade_window_status() -> dict:
+    """Dispatch on the active strategy so the ARMED/LIVE pill tells the truth."""
+    if settings.STRATEGY.lower() == "multi_session":
+        return _v2_window_status()
+    return _orb_window_status()
+
+
 # Global service instances
 broker = None
 ai_engine = None
@@ -120,6 +171,23 @@ async def lifespan(app: FastAPI):
     if settings.TRADING_ENABLED:
         await scheduler.start()
 
+        # Auto-begin the forward-test campaign on first armed boot so the
+        # 60-day clock starts the moment the engine goes live — no manual step
+        # to forget, and the start date never moves after that.
+        from backend.services.forward_test import get_campaign, begin_campaign
+        if get_campaign() is None:
+            try:
+                acct = await broker.get_account()
+                start_equity = float(acct.get("equity", settings.PROP_FIRM_ACCOUNT_SIZE))
+            except Exception:
+                start_equity = settings.PROP_FIRM_ACCOUNT_SIZE
+            begin_campaign(
+                settings.FORWARD_TEST_TARGET_DAYS,
+                settings.STRATEGY,
+                settings.SYMBOLS,
+                start_equity,
+            )
+
     logger.info("AI Trading Platform started | Broker: %s | Prop Firm: %s", settings.BROKER, settings.PROP_FIRM)
 
     yield
@@ -149,11 +217,12 @@ app.add_middleware(
 async def get_status():
     sched = get_scheduler_state()
     sessions = market_data.get_sessions_status()
-    orb = _orb_window_status()
+    orb = _trade_window_status()
     return {
         "status": "ok",
         "broker": settings.BROKER,
         "prop_firm": settings.PROP_FIRM,
+        "strategy": settings.STRATEGY,
         "trading_enabled": settings.TRADING_ENABLED,
         # ORB trade window: the strategy only fires 9:35–14:00 ET on weekdays.
         # Used by the UI to show ARMED (enabled, waiting) vs LIVE (in-window).
@@ -481,6 +550,34 @@ async def trade_insights(db: Session = Depends(get_db)):
 
 
 # ── Paper Forward-Test ──────────────────────────────────────────────────────
+
+@app.get("/api/forward-test/status")
+async def forward_test_status(db: Session = Depends(get_db)):
+    """
+    The 60-day live paper campaign: day counter, equity curve, uptime
+    heartbeat, and trade record since the immovable start date.
+    """
+    from backend.services.forward_test import campaign_status
+    return campaign_status(db)
+
+
+@app.post("/api/forward-test/begin")
+async def forward_test_begin(target_days: int = 0, db: Session = Depends(get_db)):
+    """
+    Manually (re)start the campaign clock. Normally unnecessary — the campaign
+    auto-begins the first time the engine boots armed. Restarting moves the
+    start date, which invalidates the track record, so use deliberately.
+    """
+    from backend.services.forward_test import begin_campaign, campaign_status
+    days = target_days or settings.FORWARD_TEST_TARGET_DAYS
+    try:
+        acct = await broker.get_account() if broker else {}
+        start_equity = float(acct.get("equity", settings.PROP_FIRM_ACCOUNT_SIZE))
+    except Exception:
+        start_equity = settings.PROP_FIRM_ACCOUNT_SIZE
+    begin_campaign(days, settings.STRATEGY, settings.SYMBOLS, start_equity)
+    return campaign_status(db)
+
 
 @app.post("/api/forward-test/run")
 async def forward_test_run(period: str = "30d", db: Session = Depends(get_db)):

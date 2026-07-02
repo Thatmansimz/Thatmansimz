@@ -55,3 +55,8 @@ frontend/.env.production.local
 # Distribution
 *.tar.gz
 *.zip
+
+# Engine runtime state (forward-test campaign — never commit, never delete)
+logs/
+data/paper_state.json
+data/forward_test.json

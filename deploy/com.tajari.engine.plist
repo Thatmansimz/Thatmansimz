@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for the Tajari trading engine (macOS).
+
+  Installs the engine as a per-user service that starts at login and is
+  restarted automatically if it ever dies — the most reliable way to keep
+  the 60-day forward test running unattended.
+
+  Install (from the repo root — REPLACE the two REPO_PATH placeholders below
+  with the absolute path to your clone first):
+
+    cp deploy/com.tajari.engine.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.tajari.engine.plist
+
+  Check:    launchctl list | grep tajari
+  Stop:     launchctl unload ~/Library/LaunchAgents/com.tajari.engine.plist
+  Logs:     REPO_PATH/logs/launchd.{out,err}.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.tajari.engine</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPO_PATH/scripts/run_engine.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>REPO_PATH</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>REPO_PATH/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPO_PATH/logs/launchd.err.log</string>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

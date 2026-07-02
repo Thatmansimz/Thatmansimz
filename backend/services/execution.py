@@ -98,12 +98,14 @@ class ExecutionService:
             self.db.commit()
             return None
 
-        # Record trade
+        # Record trade at the actual FILL price (includes slippage), not the
+        # signal price — otherwise slippage silently vanishes from the P&L.
+        fill_price = order_result.get("fill_price", signal_data["entry_price"])
         trade = Trade(
             symbol=signal_data["symbol"],
             side=side,
             qty=qty,
-            entry_price=signal_data["entry_price"],
+            entry_price=fill_price,
             stop_loss=signal_data["stop_loss"],
             take_profit=signal_data["target_1"],
             take_profit_2=signal_data.get("target_2"),
@@ -137,6 +139,10 @@ class ExecutionService:
         open_trades = (
             self.db.query(Trade).filter(Trade.status == "open").all()
         )
+        # Self-heal the concurrent-trades counter from the DB — it starts at 0
+        # after a restart even when positions are open, and V2 trades can be
+        # held across the midnight counter reset.
+        self.risk_manager.sync_active_trades(len(open_trades))
         for trade in open_trades:
             await self._check_trade(trade)
 
@@ -206,13 +212,16 @@ class ExecutionService:
         return True
 
     async def _finalize_trade(self, trade: Trade, exit_price: float, reason: str):
+        from backend.config import settings
+        from backend.services.costs import round_trip_commission
+
         pv = _point_value(trade.symbol)
         if trade.side == "long":
             gross_pnl = (exit_price - trade.entry_price) * pv * trade.qty
         else:
             gross_pnl = (trade.entry_price - exit_price) * pv * trade.qty
 
-        commission = trade.qty * 2.0  # ~$2/contract round-trip estimate
+        commission = round_trip_commission(trade.qty, settings.COMMISSION_PER_SIDE)
         net_pnl = gross_pnl - commission
 
         trade.exit_price = exit_price
@@ -238,6 +247,25 @@ class ExecutionService:
             daily_stats.wins += 1
         else:
             daily_stats.losses += 1
+
+        # Move the account — without this, balance/equity flatline forever and
+        # the forward-test equity curve records nothing.
+        account = self._get_account()
+        if account:
+            account.balance = (account.balance or 0.0) + net_pnl
+            account.equity = account.balance
+            account.realized_pnl_today = (account.realized_pnl_today or 0.0) + net_pnl
+            account.cumulative_profit = (account.cumulative_profit or 0.0) + net_pnl
+            account.last_trade_date = date.today()
+            account.update_peak()
+            drawdown = account.calculate_drawdown_from_peak()
+            account.max_drawdown_reached = max(account.max_drawdown_reached or 0.0, drawdown)
+        daily_stats.current_balance = account.balance if account else daily_stats.current_balance
+
+        # Paper broker keeps its own persisted balance in sync.
+        realize = getattr(self.broker, "realize_pnl", None)
+        if callable(realize):
+            realize(net_pnl)
 
         self.risk_manager.decrement_active_trades()
         self.risk_manager.update_daily_pnl(net_pnl)

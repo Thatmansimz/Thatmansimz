@@ -131,3 +131,36 @@ class DailyStats(Base):
             "signals_generated": self.signals_generated,
             "signals_taken": self.signals_taken,
         }
+
+
+class EquitySnapshot(Base):
+    """
+    One row per calendar day — the audited equity record for the forward-test
+    campaign. Written by the scheduler every cycle (cheap upsert), so the
+    curve survives restarts and gaps are visible as missing days.
+    """
+    __tablename__ = "equity_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, unique=True, nullable=False, index=True)
+
+    balance = Column(Float, default=0.0)          # realized account balance
+    equity = Column(Float, default=0.0)           # balance + unrealized
+    unrealized_pnl = Column(Float, default=0.0)
+
+    # Engine heartbeat: scheduler cycles recorded today. At a 60s cycle this
+    # maxes at ~1440/day — uptime% = cycles / 1440.
+    cycles = Column(Integer, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "date": self.date.isoformat() if self.date else None,
+            "balance": self.balance,
+            "equity": self.equity,
+            "unrealized_pnl": self.unrealized_pnl,
+            "cycles": self.cycles,
+            "uptime_pct": round(min(100.0, (self.cycles or 0) / 1440.0 * 100.0), 1),
+        }
