@@ -95,6 +95,15 @@ def campaign_status(db) -> dict:
     losses = sum(1 for t in closed if (t.net_pnl or 0) <= 0)
     total_pnl = sum((t.net_pnl or 0) for t in closed)
 
+    # Uptime for TODAY must be measured against minutes elapsed so far, not
+    # the full 1440-minute day — otherwise a perfectly healthy engine reads
+    # "15%" at 4 AM and slowly climbs, which reads as an outage when it isn't.
+    now = datetime.now()
+    minutes_elapsed = max(1, now.hour * 60 + now.minute)
+    uptime_today = 0.0
+    if today_snap:
+        uptime_today = round(min(100.0, (today_snap.cycles or 0) / minutes_elapsed * 100.0), 1)
+
     return {
         "active": True,
         "start_date": meta["start_date"],
@@ -111,6 +120,6 @@ def campaign_status(db) -> dict:
         "wins": wins,
         "losses": losses,
         "win_rate": round(100.0 * wins / len(closed), 1) if closed else 0.0,
-        "uptime_today_pct": today_snap.to_dict()["uptime_pct"] if today_snap else 0.0,
+        "uptime_today_pct": uptime_today,
         "snapshots": [s.to_dict() for s in snaps],
     }
