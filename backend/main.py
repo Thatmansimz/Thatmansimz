@@ -17,7 +17,7 @@ from backend.models.account import Account
 from backend.services.ai_engine import AIEngine
 from backend.services.market_data import MarketDataService
 from backend.services.risk_manager import RiskManager
-from backend.services.execution import ExecutionService, rejection_summary as _rejection_summary
+from backend.services.execution import ExecutionService, rejection_summary as _rejection_summary, trading_day
 from backend.services.scheduler import TradingScheduler, get_scheduler_state
 from backend.brokers import get_broker
 
@@ -250,23 +250,38 @@ async def get_status():
         "rejections": _rejection_summary(),
         "symbols": settings.SYMBOLS,
         "ai_threshold": settings.AI_CONFIDENCE_THRESHOLD,
-        "max_stop_dollars": settings.MAX_STOP_LOSS_DOLLARS,
+        # Report the cap that ACTUALLY governs the active strategy. V2 is bound
+        # by V2_MAX_RISK_DOLLARS, so showing V1's $250 here told the operator
+        # the risk was 4x smaller than it really is.
+        "max_stop_dollars": (
+            risk_manager._risk_cap(settings.STRATEGY.lower())
+            if risk_manager else settings.MAX_STOP_LOSS_DOLLARS
+        ),
         "daily_target": settings.DAILY_PROFIT_TARGET_DOLLARS,
     }
 
 
 @app.post("/api/settings/max-stop")
 async def set_max_stop(value: float):
-    """Live-adjust the max stop-loss budget per trade from the dashboard."""
+    """
+    Live-adjust the risk cap per trade from the dashboard.
+
+    Writes whichever cap actually governs the active strategy — under
+    multi_session that is V2_MAX_RISK_DOLLARS. Previously this always wrote
+    V1's MAX_STOP_LOSS_DOLLARS, so under V2 the slider was a silent no-op.
+    """
     value = max(50.0, min(5000.0, round(float(value))))
-    settings.MAX_STOP_LOSS_DOLLARS = value
-    # Push into the running strategy so it takes effect on the next signal.
-    if scheduler is not None and getattr(scheduler, "strategy", None) is not None:
-        try:
-            scheduler.strategy.max_stop_dollars = value
-        except Exception:
-            pass
-    return {"max_stop_dollars": settings.MAX_STOP_LOSS_DOLLARS}
+    if settings.STRATEGY.lower() == "multi_session":
+        settings.V2_MAX_RISK_DOLLARS = value
+    else:
+        settings.MAX_STOP_LOSS_DOLLARS = value
+        # Push into the running strategy so it takes effect on the next signal.
+        if scheduler is not None and getattr(scheduler, "strategy", None) is not None:
+            try:
+                scheduler.strategy.max_stop_dollars = value
+            except Exception:
+                pass
+    return {"max_stop_dollars": value}
 
 
 # ── Account ───────────────────────────────────────────────────────────────────
@@ -323,7 +338,7 @@ async def list_trades(
 async def trades_today(db: Session = Depends(get_db)):
     trades = (
         db.query(Trade)
-        .filter(Trade.trade_date == date.today())
+        .filter(Trade.trade_date == trading_day())
         .order_by(Trade.created_at.desc())
         .all()
     )
@@ -377,9 +392,9 @@ async def daily_stats(db: Session = Depends(get_db)):
 
 @app.get("/api/stats/today")
 async def today_stats(db: Session = Depends(get_db)):
-    stats = db.query(DailyStats).filter(DailyStats.date == date.today()).first()
+    stats = db.query(DailyStats).filter(DailyStats.date == trading_day()).first()
     if not stats:
-        return {"date": date.today().isoformat(), "pnl": 0.0, "trades_count": 0}
+        return {"date": trading_day().isoformat(), "pnl": 0.0, "trades_count": 0}
     return stats.to_dict()
 
 
@@ -673,7 +688,7 @@ async def prop_firm_status(db: Session = Depends(get_db)):
     if not risk_manager:
         raise HTTPException(status_code=503, detail="Risk manager not ready")
     account = db.query(Account).first()
-    today = db.query(DailyStats).filter(DailyStats.date == date.today()).first()
+    today = db.query(DailyStats).filter(DailyStats.date == trading_day()).first()
     return risk_manager.get_prop_firm_status(account, today)
 
 
@@ -803,7 +818,7 @@ async def websocket_live(ws: WebSocket):
             # Send live update every 5 seconds
             db = SessionLocal()
             try:
-                today = db.query(DailyStats).filter(DailyStats.date == date.today()).first()
+                today = db.query(DailyStats).filter(DailyStats.date == trading_day()).first()
                 open_trades = db.query(Trade).filter(Trade.status == "open").all()
                 await ws.send_json({
                     "type": "heartbeat",

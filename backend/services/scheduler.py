@@ -11,6 +11,7 @@ from backend.models.signal import Signal
 from backend.services.ai_engine import AIEngine
 from backend.services.market_data import MarketDataService
 from backend.services.risk_manager import RiskManager
+from backend.services.execution import trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -79,12 +80,31 @@ class TradingScheduler:
                 pass
         logger.info("Trading scheduler stopped")
 
+    def _recover_db(self):
+        """
+        Roll back the long-lived execution session after any failed write.
+
+        ExecutionService holds ONE SQLAlchemy session for the entire 60-day run.
+        A single failed commit — a transient "database is locked" from an
+        overlapping restart or a manual script touching data/trading.db — leaves
+        that session poisoned, so every later query raises PendingRollbackError.
+        The handlers below swallow it, so the process never dies, launchd never
+        restarts it, and /api/status keeps reporting "scanning" with a healthy
+        feed while the engine has silently stopped both opening trades AND
+        monitoring open ones. Same shape as the outage that cost 25 days.
+        """
+        try:
+            self.execution.db.rollback()
+        except Exception:
+            pass
+
     async def _loop(self):
         while self._running:
             try:
                 await self._cycle()
             except Exception as exc:
                 logger.error("Scheduler cycle error: %s", exc, exc_info=True)
+                self._recover_db()
             await asyncio.sleep(self._cycle_interval_seconds)
 
     async def _cycle(self):
@@ -108,6 +128,7 @@ class TradingScheduler:
             await self.execution.monitor_positions()
         except Exception as exc:
             logger.error("Position monitor error: %s", exc)
+            self._recover_db()
 
         # Forward-test heartbeat: upsert today's equity snapshot every cycle so
         # the 60-day track record survives restarts and gaps stay visible.
@@ -121,7 +142,7 @@ class TradingScheduler:
         try:
             from backend.models.trade import DailyStats
             today_stats = db.query(DailyStats).filter(
-                DailyStats.date == date.today()
+                DailyStats.date == trading_day()
             ).first()
             account = db.query(__import__("backend.models.account", fromlist=["Account"]).Account).first()
 
@@ -233,4 +254,5 @@ class TradingScheduler:
                 logger.info("Trade executed: ID=%d", trade.id)
                 _scheduler_state["scan_status"] = f"trade taken: {signal_data['direction'].upper()} {symbol}"
         except Exception as exc:
-            logger.error("Execution error for %s signal: %s", symbol, exc)
+            logger.exception("Execution error for %s signal: %s", symbol, exc)
+            self._recover_db()

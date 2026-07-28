@@ -145,6 +145,18 @@ class ExecutionService:
         qty = signal_data.get("contracts", 1)
         side = signal_data["direction"]
 
+        # Exit target MUST match what the backtest validated, or the live record
+        # measures a system nobody tested. V2 sizes contracts so that TARGET_2
+        # (the session R:R cap, 2R) lands in the $500-1500 window, and
+        # scripts/v2_backtest.py exits at target_2 — that is where the 68-trade
+        # / PF 1.34 / +$5,127 result comes from. Exiting at target_1 (1R) halves
+        # every winner while losers stay full size, dropping the payoff ratio
+        # from ~1.72 to ~0.81 — a losing configuration at V2's 41% win rate.
+        # V1 ORB/momentum are untouched: their target_1 IS their real target.
+        tp = signal_data["target_1"]
+        if signal_data.get("strategy") == "multi_session":
+            tp = signal_data.get("target_2") or tp
+
         try:
             order_result = await self.broker.submit_bracket_order(
                 symbol=signal_data["symbol"],
@@ -152,7 +164,7 @@ class ExecutionService:
                 side=side,
                 entry_price=signal_data["entry_price"],
                 stop_price=signal_data["stop_loss"],
-                target_price=signal_data["target_1"],
+                target_price=tp,
             )
         except Exception as exc:
             logger.error("Order submission failed: %s", exc)
@@ -161,8 +173,12 @@ class ExecutionService:
             return None
 
         if not order_result or order_result.get("status") != "filled" or not order_result.get("order_id"):
+            status = (order_result or {}).get("status")
             logger.error("Order not filled for %s (%s) — no trade recorded.",
-                         signal_data["symbol"], (order_result or {}).get("status"))
+                         signal_data["symbol"], status)
+            # Count it like every other refusal, or a broker that rejects every
+            # order looks exactly like a market with no setups.
+            _note_rejection(f"broker rejected order ({status})")
             db_signal.status = "cancelled"
             self.db.commit()
             return None
@@ -176,7 +192,7 @@ class ExecutionService:
             qty=qty,
             entry_price=fill_price,
             stop_loss=signal_data["stop_loss"],
-            take_profit=signal_data["target_1"],
+            take_profit=tp,
             take_profit_2=signal_data.get("target_2"),
             status="open",
             strategy=signal_data.get("strategy", "ai_ensemble"),
@@ -200,7 +216,7 @@ class ExecutionService:
             "Trade opened: %s %s x%d @ %.2f | SL: %.2f | TP: %.2f | Conf: %.0f%%",
             side.upper(), signal_data["symbol"], qty,
             signal_data["entry_price"], signal_data["stop_loss"],
-            signal_data["target_1"], signal_data["confidence"] * 100,
+            tp, signal_data["confidence"] * 100,
         )
         return trade
 
@@ -372,14 +388,18 @@ class ExecutionService:
             account.max_drawdown_reached = max(account.max_drawdown_reached or 0.0, drawdown)
         daily_stats.current_balance = account.balance if account else daily_stats.current_balance
 
-        # Paper broker keeps its own persisted balance in sync.
-        realize = getattr(self.broker, "realize_pnl", None)
-        if callable(realize):
-            realize(net_pnl)
-
+        # Commit the DB FIRST, then move the broker's persisted balance. If the
+        # broker went first and the commit failed, the trade would still be
+        # "open" while the balance already moved — and the recovery path would
+        # book the same P&L a second time. DB-then-broker means the worst case
+        # is a retry that finds the trade already closed.
         self.risk_manager.decrement_active_trades()
         self.risk_manager.update_daily_pnl(net_pnl)
         self.db.commit()
+
+        realize = getattr(self.broker, "realize_pnl", None)
+        if callable(realize):
+            realize(net_pnl)
 
         logger.info(
             "Trade closed: %s %s @ %.2f | P&L: $%.2f | Reason: %s",

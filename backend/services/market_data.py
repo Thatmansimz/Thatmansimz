@@ -84,10 +84,17 @@ def _reset_yfinance_session():
     pair goes stale after days/weeks in a long-running process and every
     request then fails with "possibly delisted; no price data found".
 
-    yfinance internals vary by version (0.2.x keeps a YfData singleton; the
-    1.x line creates instances), so this is deliberately belt-and-braces:
-    clear the singleton slot if present, then sweep the live heap for YfData
-    instances and null their _crumb/_cookie. Everything is best-effort.
+    ORDER MATTERS. The persisted cookie must be purged FIRST: yfinance reloads
+    it from disk on the next request (_load_cookie_curlCffi) and only checks
+    its LOCAL expiry timestamp, so a cookie Yahoo has invalidated server-side
+    looks perfectly valid and is reinstalled immediately — which would make
+    wiping the in-memory state pointless.
+
+    yfinance internals differ by version, so each step is guarded and the
+    outcome is logged. If a future version renames these, the log says so
+    loudly instead of the heal silently becoming a no-op (verified against the
+    installed version: 0.2.x kept a YfData singleton; 1.5.x does not, and
+    persists the cookie via cache.get_cookie_cache().store('curlCffi', ...)).
     """
     with _feed_lock:
         _feed_state["resets"] += 1
@@ -95,19 +102,56 @@ def _reset_yfinance_session():
 
     try:
         from yfinance.data import YfData
-    except Exception:
+    except Exception as exc:
+        logger.error("Data feed: cannot import yfinance internals to heal: %s", exc)
         return
 
-    # 0.2.x: null the singleton so the next call constructs a fresh instance
-    # (new session, new cookie jar, new crumb).
+    done = []
+
+    # 1. Purge the DISK cookie first (1.x). Both _get_cookie_basic and
+    #    _get_cookie_csrf reload from here, so leaving it in place undoes
+    #    everything below.
+    purged = False
+    try:
+        import yfinance.cache as _yc
+        # Preferred: DELETE the cached row. Storing an empty dict is NOT
+        # equivalent — yfinance's loader only treats a MISSING row as a miss,
+        # and an empty one makes it raise IndexError on every request.
+        cache_obj = _yc.get_cookie_cache() if hasattr(_yc, "get_cookie_cache") else None
+        schema = getattr(_yc, "_CookieSchema", None)
+        if cache_obj is not None and schema is not None:
+            if getattr(cache_obj, "initialised", 0) == -1:
+                cache_obj.initialise()
+            schema.delete().where(schema.strategy == "curlCffi").execute()
+            purged = True
+            done.append("disk-cookie")
+        elif hasattr(_yc, "get_cookie_cache_manager"):   # older layout
+            _yc.get_cookie_cache_manager().get_cookie_db().delete_cookies()
+            purged = True
+            done.append("disk-cookie(legacy)")
+    except Exception as exc:
+        logger.error("Data feed: disk cookie purge failed: %s", exc)
+
+    if not purged:
+        logger.error(
+            "Data feed: could NOT purge the persisted cookie (yfinance %s). The "
+            "stale cookie will be reloaded from disk and healing will FAIL — "
+            "this is the failure that once cost 25 days.",
+            getattr(__import__("yfinance"), "__version__", "?"),
+        )
+
+    # 2. 0.2.x singleton slot, if this version has one.
     try:
         if hasattr(YfData, "_YfData__instance"):
             YfData._YfData__instance = None
+            done.append("singleton")
     except Exception:
         pass
 
-    # All versions: find every live YfData and wipe its auth state so the
-    # next request performs a fresh cookie+crumb handshake.
+    # 3. Wipe auth state on every live YfData: the crumb, the cookie, AND the
+    #    session itself (whose jar holds the rotten cookie independently of
+    #    _cookie). Dropping _session forces a brand-new handshake.
+    wiped = 0
     try:
         import gc
         for obj in gc.get_objects():
@@ -117,18 +161,24 @@ def _reset_yfinance_session():
                         setattr(obj, attr, None)
                     except Exception:
                         pass
-    except Exception:
-        pass
+                try:
+                    sess = getattr(obj, "_session", None)
+                    jar = getattr(sess, "cookies", None)
+                    if jar is not None and hasattr(jar, "clear"):
+                        jar.clear()
+                except Exception:
+                    pass
+                wiped += 1
+        if wiped:
+            done.append(f"instances({wiped})")
+    except Exception as exc:
+        logger.error("Data feed: YfData sweep failed: %s", exc)
 
-    # Some versions persist the cookie to a disk cache — clear that too so a
-    # rotten cookie isn't immediately reloaded.
-    try:
-        import yfinance.cache as _yc
-        mgr = getattr(_yc, "_CookieCacheManager", None)
-        if mgr is not None and hasattr(_yc, "get_cookie_cache_manager"):
-            _yc.get_cookie_cache_manager().get_cookie_db().delete_cookies()
-    except Exception:
-        pass
+    if done:
+        logger.warning("Data feed: session rebuild cleared %s", ", ".join(done))
+    else:
+        logger.error("Data feed: session rebuild cleared NOTHING — the outage "
+                     "will persist. yfinance internals have changed.")
 
 
 class MarketDataService:

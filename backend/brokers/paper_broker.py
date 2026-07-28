@@ -190,6 +190,15 @@ class PaperBroker(BaseBroker):
         fill_price = round(
             slip_stop_exit(symbol, exit_side, pos["current_price"], slip_ticks), 2
         )
+        # Record the EXIT fill, mirroring the stop/target path. Without this the
+        # position is gone but no exit record exists, so if _finalize_trade then
+        # fails (crash, DB hiccup) the trade can NEVER be reconciled — it stays
+        # "open" forever, its P&L never books, and the one-position-per-symbol
+        # guard silently discards every future signal for the rest of the run.
+        self._orders[pos["order_id"]] = {
+            "order_id": pos["order_id"], "price": fill_price,
+            "status": "filled", "exit": True,
+        }
         self._save()
         logger.info("[PAPER] Closed %s @ %.2f", symbol, fill_price)
         return {"price": fill_price, "status": "filled"}

@@ -14,7 +14,11 @@ import os
 import logging
 from datetime import date, datetime
 
+import pytz
 from backend.models.trade import Trade, DailyStats, EquitySnapshot
+from backend.services.execution import trading_day
+
+ET = pytz.timezone("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +39,7 @@ def get_campaign() -> dict | None:
 def begin_campaign(target_days: int, strategy: str, symbols: list[str],
                    start_equity: float) -> dict:
     meta = {
-        "start_date": date.today().isoformat(),
+        "start_date": trading_day().isoformat(),
         "target_days": int(target_days),
         "strategy": strategy,
         "symbols": symbols,
@@ -52,7 +56,7 @@ def begin_campaign(target_days: int, strategy: str, symbols: list[str],
 
 def record_snapshot(db, balance: float, equity: float, unrealized: float):
     """Upsert today's equity snapshot and bump the cycle heartbeat."""
-    today = date.today()
+    today = trading_day()
     snap = db.query(EquitySnapshot).filter(EquitySnapshot.date == today).first()
     if not snap:
         snap = EquitySnapshot(date=today, cycles=0)
@@ -70,7 +74,7 @@ def campaign_status(db) -> dict:
         return {"active": False}
 
     start = date.fromisoformat(meta["start_date"])
-    today = date.today()
+    today = trading_day()
     day_number = (today - start).days + 1  # day 1 on the start date
     target = meta.get("target_days", 60)
 
@@ -98,7 +102,7 @@ def campaign_status(db) -> dict:
     # Uptime for TODAY must be measured against minutes elapsed so far, not
     # the full 1440-minute day — otherwise a perfectly healthy engine reads
     # "15%" at 4 AM and slowly climbs, which reads as an outage when it isn't.
-    now = datetime.now()
+    now = datetime.now(ET)
     minutes_elapsed = max(1, now.hour * 60 + now.minute)
     uptime_today = 0.0
     if today_snap:

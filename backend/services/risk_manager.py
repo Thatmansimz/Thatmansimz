@@ -204,8 +204,13 @@ class RiskManager:
             if daily_pnl >= self.config.DAILY_PROFIT_TARGET_DOLLARS:
                 return False, f"Daily profit target ${self.config.DAILY_PROFIT_TARGET_DOLLARS:,.0f} reached"
 
-            # Stop if daily loss limit breached
-            if daily_pnl <= -prop_rules["daily_loss_limit"]:
+            # Stop if daily loss limit breached.
+            # DailyStats.pnl books to the trade's ENTRY day, so an Asia trade
+            # opened Monday night and stopped out Tuesday morning charges its
+            # loss to Monday — leaving Tuesday's limit reading $0 while real
+            # money was lost today. _daily_realized_pnl is keyed to the EXIT day
+            # (reset on the ET rollover), so take whichever is worse.
+            if min(daily_pnl, self._daily_realized_pnl) <= -prop_rules["daily_loss_limit"]:
                 return False, f"Daily loss limit ${prop_rules['daily_loss_limit']:,.0f} breached"
 
             # Warn buffer at 80% of daily loss limit
