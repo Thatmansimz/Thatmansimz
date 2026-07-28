@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     NEWS_CALENDAR_PATH: str = "data/news_calendar.json"
 
     # Risk management
+    # NOTE: MAX_STOP_LOSS_DOLLARS is V1 ORB's risk budget (it sizes TO this).
+    # V2 multi_session sizes to a $500–1500 profit window instead, which puts
+    # its risk in the $400–1000 band; it is capped by V2_MAX_RISK_DOLLARS so
+    # the V1 budget cannot silently veto every V2 signal.
+    V2_MAX_RISK_DOLLARS: float = 1100.0
     MAX_STOP_LOSS_DOLLARS: float = 250.0
     DAILY_PROFIT_TARGET_DOLLARS: float = 1000.0
     MAX_CONCURRENT_TRADES: int = 3

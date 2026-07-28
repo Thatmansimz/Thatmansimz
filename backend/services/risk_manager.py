@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time as dtime
 from typing import Optional
 
 import pytz
@@ -37,10 +37,22 @@ class RiskManager:
         weekday = now.weekday()
 
         if instrument_type == "futures":
-            # Futures trade nearly 24/5 (closed Fri 5pm – Sun 6pm ET)
-            if weekday == 6:
+            # CME equity-index futures: Sunday 18:00 ET → Friday 17:00 ET, with
+            # a daily 17:00–18:00 ET maintenance halt.
+            #
+            # The previous version was shifted one day (it blocked ALL of Sunday
+            # and allowed Fri-night through Sat-afternoon), which killed every
+            # Sunday-night Asia kill zone while the dashboard showed LIVE, and
+            # let the engine "trade" a frozen Friday bar all weekend.
+            # Python weekday: Mon=0 … Fri=4, Sat=5, Sun=6.
+            t = now.time()
+            if weekday == 5:                                  # Saturday: closed
                 return False
-            if weekday == 5 and now.hour >= 17:
+            if weekday == 6:                                  # Sunday: reopen 18:00 ET
+                return t >= dtime(18, 0)
+            if weekday == 4 and t >= dtime(17, 0):            # Friday: closed 17:00 ET
+                return False
+            if dtime(17, 0) <= t < dtime(18, 0):              # daily maintenance halt
                 return False
             return True
 
@@ -123,25 +135,44 @@ class RiskManager:
 
     # ── Trade Validation ──────────────────────────────────────────────────────
 
+    def _risk_cap(self, strategy: str) -> float:
+        """
+        Risk ceiling per trade, per strategy.
+
+        V1 ORB sizes itself TO a risk budget, so MAX_STOP_LOSS_DOLLARS is both
+        its sizing input and its ceiling. V2 multi_session sizes to a $500–1500
+        PROFIT window instead (that is what the 30-day backtest validated), so
+        its risk lands in the $400–1000 range. Judging V2 against V1's $250
+        ceiling rejected 100% of V2 signals — the engine generated setups
+        forever and never placed a single trade.
+        """
+        if strategy == "multi_session":
+            return float(getattr(self.config, "V2_MAX_RISK_DOLLARS", 1100.0))
+        return float(self.config.MAX_STOP_LOSS_DOLLARS)
+
     def validate_signal(self, signal: dict) -> tuple[bool, str]:
         stop_distance = abs(signal["entry_price"] - signal["stop_loss"])
         contracts = signal.get("contracts", 1)
         symbol = signal["symbol"]
+        strategy = signal.get("strategy", "")
         point_value = POINT_VALUES.get(symbol.upper(), 5.0)
         risk_dollars = stop_distance * point_value * contracts
 
-        if risk_dollars > self.config.MAX_STOP_LOSS_DOLLARS:
-            return False, f"Risk ${risk_dollars:.0f} exceeds max ${self.config.MAX_STOP_LOSS_DOLLARS}"
+        cap = self._risk_cap(strategy)
+        if risk_dollars > cap:
+            return False, f"Risk ${risk_dollars:.0f} exceeds max ${cap:.0f}"
 
         rr = signal.get("risk_reward_ratio", 0)
         if rr < self.config.MIN_RISK_REWARD_RATIO:
             return False, f"R:R {rr:.2f} below minimum {self.config.MIN_RISK_REWARD_RATIO}"
 
-        # Rule-based strategies (ORB, momentum) were validated in the backtest
-        # without a confidence gate — the strategy's own signal logic IS the
-        # quality filter. AI_CONFIDENCE_THRESHOLD applies to the ML model only.
-        strategy = signal.get("strategy", "")
-        if strategy not in ("orb", "momentum"):
+        # Rule-based strategies were validated in the backtest WITHOUT a
+        # confidence gate — the strategy's own entry logic IS the quality
+        # filter. AI_CONFIDENCE_THRESHOLD applies to the ML model only.
+        # multi_session belongs here too: its confidence is a descriptive score
+        # starting at 0.55, so the 0.65 threshold silently rejected every V2
+        # setup outside a kill zone — trades the backtest counted.
+        if strategy not in ("orb", "momentum", "multi_session"):
             if signal["confidence"] < self.config.AI_CONFIDENCE_THRESHOLD:
                 return False, f"Confidence {signal['confidence']:.2f} below threshold"
 

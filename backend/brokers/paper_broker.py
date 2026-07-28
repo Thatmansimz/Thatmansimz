@@ -93,6 +93,17 @@ class PaperBroker(BaseBroker):
         stop_price: float,
         target_price: float,
     ) -> dict:
+        # The book is keyed by symbol, so accepting a second order for a symbol
+        # would silently destroy the tracked position and leave an orphan trade
+        # that later gets booked at a fabricated price. Refuse instead.
+        if symbol in self._positions:
+            logger.error(
+                "[PAPER] REJECTED %s order for %s — a position is already open "
+                "(order %s). Refusing to overwrite the book.",
+                side.upper(), symbol, self._positions[symbol].get("order_id"),
+            )
+            return {"order_id": None, "fill_price": entry_price, "status": "rejected"}
+
         order_id = str(uuid.uuid4())[:8]
         slip_ticks = int(getattr(self.config, "SLIPPAGE_TICKS", 1))
         fill_price = round(slip_entry(symbol, side, entry_price, slip_ticks), 2)
@@ -123,10 +134,12 @@ class PaperBroker(BaseBroker):
         if not pos:
             return None
 
-        # Pull a REAL current price from the market instead of a random walk.
+        # Pull the REAL last traded close — never get_latest_price(), which adds
+        # a simulated ±0.05% jitter (±10 index points on MNQ, wider than a
+        # typical structural stop). That jitter was deciding stop-outs by RNG.
         # Fall back to the last known price if the feed is briefly unavailable.
         try:
-            price = self.market_data.get_latest_price(symbol)
+            price = self.market_data.get_last_close(symbol)
         except Exception:
             price = None
         if not price or price <= 0:

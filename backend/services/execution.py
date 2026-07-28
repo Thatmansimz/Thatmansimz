@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, date
 from typing import Optional
 
+import pytz
 from sqlalchemy.orm import Session
 
 from backend.models.trade import Trade, DailyStats
@@ -10,6 +11,42 @@ from backend.models.account import Account
 from backend.services.risk_manager import RiskManager, POINT_VALUES
 
 logger = logging.getLogger(__name__)
+
+ET = pytz.timezone("America/New_York")
+
+# Why signals are being turned away, surfaced on /api/status so a silently
+# non-trading engine can never again look identical to a quiet market.
+_rejections: dict[str, int] = {}
+_last_rejection: dict = {"reason": None, "at": None}
+
+
+def _note_rejection(reason: str):
+    key = reason.split("|")[0].strip()[:60]
+    _rejections[key] = _rejections.get(key, 0) + 1
+    _last_rejection["reason"] = key
+    _last_rejection["at"] = datetime.now(ET).isoformat()
+
+
+def rejection_summary() -> dict:
+    return {
+        "total": sum(_rejections.values()),
+        "by_reason": dict(sorted(_rejections.items(), key=lambda kv: -kv[1])[:5]),
+        "last_reason": _last_rejection["reason"],
+        "last_at": _last_rejection["at"],
+    }
+
+
+def trading_day() -> date:
+    """
+    The trading date in EXCHANGE time, not the machine's local time.
+
+    Every gate in this system (sessions, kill zones, market hours) runs on ET.
+    If the record is keyed on the host's local date instead, then on any
+    non-ET machine the recorded day flips mid-session — which silently resets
+    the daily loss limit partway through the Asia window and shifts the equity
+    curve one row off the trade log.
+    """
+    return datetime.now(ET).date()
 
 
 def _point_value(symbol: str) -> float:
@@ -24,7 +61,7 @@ class ExecutionService:
         self.db = db
 
     def _get_or_create_daily_stats(self, trade_date: date = None) -> DailyStats:
-        trade_date = trade_date or date.today()
+        trade_date = trade_date or trading_day()
         stats = self.db.query(DailyStats).filter(DailyStats.date == trade_date).first()
         if not stats:
             account = self.db.query(Account).first()
@@ -52,24 +89,49 @@ class ExecutionService:
 
         valid, validation_msg = self.risk_manager.validate_signal(signal_data)
         if not valid:
-            logger.info("Signal invalid: %s", validation_msg)
+            # WARNING, not INFO: a rejected signal is the single most common way
+            # this engine goes quiet while looking perfectly healthy.
+            logger.warning("Signal REJECTED by risk gate: %s | %s %s",
+                           validation_msg, signal_data.get("direction"), signal_data.get("symbol"))
+            _note_rejection(validation_msg)
             return None
 
-        # Save signal to DB
+        # One position per symbol — the broker book is keyed by symbol, so a
+        # second concurrent trade on the same symbol would silently overwrite
+        # the first and later be booked at its own entry price (a fabricated
+        # break-even loser). The strategy is stateless and re-evaluates the same
+        # forming 5m bar every 60s, so without this guard one setup becomes
+        # several trades.
+        existing = (
+            self.db.query(Trade)
+            .filter(Trade.symbol == signal_data["symbol"], Trade.status == "open")
+            .first()
+        )
+        if existing:
+            logger.info("Signal skipped: %s already has an open trade (id=%d)",
+                        signal_data["symbol"], existing.id)
+            return None
+
+        # Save signal to DB. Optional fields are .get() — the V2 engine does not
+        # emit entry zones or risk_amount, and hard-subscripting them raised a
+        # KeyError that silently killed every single V2 signal.
+        entry_px = signal_data["entry_price"]
         db_signal = Signal(
             symbol=signal_data["symbol"],
             direction=signal_data["direction"],
             confidence=signal_data["confidence"],
             long_probability=signal_data.get("prob_long", 0),
             short_probability=signal_data.get("prob_short", 0),
-            entry_price=signal_data["entry_price"],
-            entry_zone_low=signal_data["entry_zone_low"],
-            entry_zone_high=signal_data["entry_zone_high"],
+            entry_price=entry_px,
+            entry_zone_low=signal_data.get("entry_zone_low", entry_px),
+            entry_zone_high=signal_data.get("entry_zone_high", entry_px),
             stop_loss=signal_data["stop_loss"],
             target_1=signal_data["target_1"],
             target_2=signal_data.get("target_2"),
             risk_reward_ratio=signal_data["risk_reward_ratio"],
-            risk_amount=signal_data["risk_amount"],
+            risk_amount=signal_data.get(
+                "risk_amount", signal_data.get("est_risk_dollars", 0.0)
+            ),
             timeframe=signal_data.get("timeframe", "5m"),
             strategy=signal_data.get("strategy", "ai_ensemble"),
             indicators_json=signal_data.get("indicators", {}),
@@ -98,6 +160,13 @@ class ExecutionService:
             self.db.commit()
             return None
 
+        if not order_result or order_result.get("status") != "filled" or not order_result.get("order_id"):
+            logger.error("Order not filled for %s (%s) — no trade recorded.",
+                         signal_data["symbol"], (order_result or {}).get("status"))
+            db_signal.status = "cancelled"
+            self.db.commit()
+            return None
+
         # Record trade at the actual FILL price (includes slippage), not the
         # signal price — otherwise slippage silently vanishes from the P&L.
         fill_price = order_result.get("fill_price", signal_data["entry_price"])
@@ -115,7 +184,7 @@ class ExecutionService:
             signal_id=db_signal.id,
             broker_order_id=order_result.get("order_id"),
             entry_time=datetime.utcnow(),
-            trade_date=date.today(),
+            trade_date=trading_day(),
         )
         self.db.add(trade)
         db_signal.status = "taken"
@@ -193,8 +262,19 @@ class ExecutionService:
         except Exception:
             fill = None
 
-        exit_price = trade.take_profit if fill is None else fill.get("price", trade.entry_price)
-        await self._finalize_trade(trade, exit_price, "broker_closed")
+        # Only an actual EXIT fill may close a trade. The old code defaulted to
+        # trade.take_profit when the fill was missing — i.e. it assumed the most
+        # profitable possible outcome — and otherwise fell back to the ENTRY
+        # fill, booking exit == entry. Both fabricate results. If we cannot
+        # prove how the trade ended, leave it open and say so loudly.
+        if not fill or not fill.get("exit") or not fill.get("price"):
+            logger.error(
+                "Trade %d (%s, order %s): broker has no exit fill — leaving OPEN "
+                "for reconciliation rather than inventing an exit price.",
+                trade.id, trade.symbol, trade.broker_order_id,
+            )
+            return
+        await self._finalize_trade(trade, float(fill["price"]), "broker_closed")
 
     async def close_position(self, trade_id: int, reason: str = "manual") -> bool:
         trade = self.db.query(Trade).filter(Trade.id == trade_id).first()
@@ -203,17 +283,43 @@ class ExecutionService:
 
         try:
             fill = await self.broker.close_position(trade.symbol)
-            exit_price = fill.get("price", trade.entry_price)
         except Exception as exc:
             logger.error("Failed to close trade %d: %s", trade_id, exc)
             return False
 
-        await self._finalize_trade(trade, exit_price, reason)
+        # The paper broker returns {"price": 0.0, "status": "no_position"} when
+        # it has nothing to close. That 0.0 used to be accepted as a real exit
+        # price, booking a five-figure phantom loss that also tripped the
+        # max-drawdown lockout permanently. Never finalize on a refusal.
+        if not fill or fill.get("status") == "no_position" or not fill.get("price"):
+            logger.error(
+                "Trade %d: broker reports no position for %s — NOT finalizing "
+                "(would have booked a fake exit). Leaving open.",
+                trade_id, trade.symbol,
+            )
+            return False
+
+        await self._finalize_trade(trade, float(fill["price"]), reason)
         return True
 
     async def _finalize_trade(self, trade: Trade, exit_price: float, reason: str):
         from backend.config import settings
         from backend.services.costs import round_trip_commission
+
+        # Last line of defence for the track record: no legitimate futures exit
+        # is zero or wildly detached from the entry. Refuse rather than write a
+        # number that would poison the balance, the drawdown gate and the
+        # permanent equity curve.
+        entry = trade.entry_price or 0.0
+        if not exit_price or exit_price <= 0 or (
+            entry > 0 and abs(exit_price - entry) / entry > 0.25
+        ):
+            logger.error(
+                "Trade %d (%s): REFUSING to finalize at implausible exit %.2f "
+                "(entry %.2f, reason=%s). Trade left open.",
+                trade.id, trade.symbol, exit_price or 0.0, entry, reason,
+            )
+            return
 
         pv = _point_value(trade.symbol)
         if trade.side == "long":
@@ -238,8 +344,12 @@ class ExecutionService:
         else:
             trade.status = "closed"
 
-        # Update daily stats
-        daily_stats = self._get_or_create_daily_stats()
+        # Book the outcome on the SAME day row the trade was counted on. Using
+        # "today" here split every overnight Asia trade across two rows — the
+        # trade counted on Monday, its win/loss on Tuesday — which made every
+        # daily win-rate arithmetically impossible and mis-charged the daily
+        # loss limit to a day that never took the risk.
+        daily_stats = self._get_or_create_daily_stats(trade.trade_date)
         daily_stats.pnl = (daily_stats.pnl or 0) + net_pnl
         daily_stats.gross_pnl = (daily_stats.gross_pnl or 0) + gross_pnl
         daily_stats.commissions = (daily_stats.commissions or 0) + commission
@@ -256,7 +366,7 @@ class ExecutionService:
             account.equity = account.balance
             account.realized_pnl_today = (account.realized_pnl_today or 0.0) + net_pnl
             account.cumulative_profit = (account.cumulative_profit or 0.0) + net_pnl
-            account.last_trade_date = date.today()
+            account.last_trade_date = trading_day()
             account.update_peak()
             drawdown = account.calculate_drawdown_from_peak()
             account.max_drawdown_reached = max(account.max_drawdown_reached or 0.0, drawdown)

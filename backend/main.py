@@ -17,7 +17,7 @@ from backend.models.account import Account
 from backend.services.ai_engine import AIEngine
 from backend.services.market_data import MarketDataService
 from backend.services.risk_manager import RiskManager
-from backend.services.execution import ExecutionService
+from backend.services.execution import ExecutionService, rejection_summary as _rejection_summary
 from backend.services.scheduler import TradingScheduler, get_scheduler_state
 from backend.brokers import get_broker
 
@@ -244,6 +244,10 @@ async def get_status():
         "cycles_today": sched.get("cycles_today", 0),
         "signals_today": sched.get("signals_today", 0),
         "scan_status": sched.get("scan_status", "idle"),
+        # Why signals are being turned away. An engine that generates setups and
+        # rejects every one of them looks identical to a quiet market — this is
+        # the difference, made visible.
+        "rejections": _rejection_summary(),
         "symbols": settings.SYMBOLS,
         "ai_threshold": settings.AI_CONFIDENCE_THRESHOLD,
         "max_stop_dollars": settings.MAX_STOP_LOSS_DOLLARS,

@@ -418,8 +418,28 @@ class MarketDataService:
         df.dropna(inplace=True)
         return df
 
+    def get_last_close(self, symbol: str) -> Optional[float]:
+        """
+        The most recent REAL traded close — no simulated noise.
+
+        Anything that writes P&L must use this. get_realtime_bar() adds a
+        random ±0.05% jitter so the dashboard ticker looks alive; on MNQ at
+        20,000 that is ±10 index points, which is wider than a typical V2
+        structural stop. Feeding that into exit detection decides wins and
+        losses with a random number generator instead of the market.
+        """
+        df = self.get_historical(symbol, period="5d", interval="5m")
+        if df is None or df.empty:
+            return None
+        return float(df.iloc[-1]["close"])
+
     def get_latest_price(self, symbol: str) -> Optional[float]:
-        """Return the most recent close price for a symbol."""
+        """
+        Display-only price (includes simulated tick noise).
+
+        DO NOT use for fills, exits, or any P&L calculation — use
+        get_last_close() for those.
+        """
         bar = self.get_realtime_bar(symbol)
         return bar.get("close")
 
