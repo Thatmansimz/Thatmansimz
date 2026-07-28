@@ -49,6 +49,13 @@ if lc:
     except Exception:
         pass
 
+# A running engine with a dead data feed is BLIND, not healthy — the exact
+# silent failure that once cost 25 days of the forward-test campaign.
+feed = s.get("data_feed") or {}
+if feed and not feed.get("healthy", True):
+    n = feed.get("consecutive_failures", "?")
+    print(f"DATA OUTAGE — engine running but blind ({n} failed downloads)"); sys.exit(1)
+
 print("OK"); sys.exit(0)
 PY
 }

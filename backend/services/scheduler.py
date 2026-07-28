@@ -135,6 +135,22 @@ class TradingScheduler:
             _scheduler_state["scan_status"] = "scanning"
             for symbol in settings.SYMBOLS:
                 await self._scan_symbol(symbol, db, today_stats)
+
+            # Data-feed truth check: if downloads are failing, the engine is
+            # BLIND, not idle — and the dashboard/watchdog must say so. This
+            # exact silence (yfinance stale-session "possibly delisted") once
+            # cost 25 days of a forward-test campaign.
+            from backend.services.market_data import get_feed_health
+            feed = get_feed_health()
+            if not feed["healthy"]:
+                _scheduler_state["scan_status"] = (
+                    f"DATA OUTAGE — {feed['consecutive_failures']} failed fetches"
+                )
+                logger.error(
+                    "DATA OUTAGE: %d consecutive failed downloads (last error: %s). "
+                    "Engine is blind, not idle.",
+                    feed["consecutive_failures"], feed["last_error"],
+                )
         finally:
             db.close()
 
@@ -169,6 +185,11 @@ class TradingScheduler:
             if self.strategy is not None:
                 # Rule-based strategy (ORB, momentum): fetch data and evaluate
                 df = self.market_data.get_historical(symbol, period="10d", interval="5m")
+                if df is None or df.empty:
+                    # No data is NOT "no setup" — record the difference loudly.
+                    _scheduler_state["last_no_signal"] = f"{symbol} — NO DATA (feed down)"
+                    logger.warning("Scan skipped for %s: no market data", symbol)
+                    return
                 df = self.market_data.add_indicators(df)
                 signal_data = self.strategy.generate_signal(df, symbol)
             else:

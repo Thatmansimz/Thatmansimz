@@ -33,6 +33,7 @@ type Status = {
   orb_window_active?: boolean;
   orb_after_cutoff?: boolean;
   orb_opens_in_min?: number | null;
+  data_feed?: { healthy: boolean; consecutive_failures: number; last_success: string | null };
   cycles_today?: number;
   signals_today?: number;
   scan_status?: string;
@@ -165,6 +166,9 @@ function ScanActivity({ status }: { status?: Status | null }) {
   let color = "#475569";
   if (!running) {
     label = "ENGINE OFF";
+  } else if (raw.startsWith("DATA OUTAGE") || status?.data_feed?.healthy === false) {
+    // Blind engine — the worst state there is. Red, pulsing, unmissable.
+    label = "🚨 DATA OUTAGE"; color = "#ff3366"; pulse = true;
   } else if (!enabled) {
     label = "NOT ARMED";
   } else if (raw.startsWith("trade taken")) {

@@ -4,6 +4,8 @@ Provides historical and simulated real-time market data with technical indicator
 """
 import logging
 import random
+import threading
+import time as _time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -29,16 +31,126 @@ SYMBOL_MAP = {
 }
 
 
+# ── Data-feed health (shared across all MarketDataService instances) ─────────
+# The engine creates several MarketDataService objects (scheduler, broker,
+# API). Feed health must be GLOBAL so the watchdog and /api/status see the
+# truth no matter which instance failed. This is what makes a data outage
+# loud instead of silent — the failure mode that cost 25 days of the campaign.
+_feed_lock = threading.Lock()
+_feed_state = {
+    "consecutive_failures": 0,
+    "last_success": None,      # datetime of last non-empty download
+    "last_failure": None,
+    "last_error": "",
+    "resets": 0,               # how many times we rebuilt the yfinance session
+}
+
+# Rebuild the yfinance HTTP session after this many consecutive empty/failed
+# downloads. A long-running process's session cookies/crumbs go stale after
+# days-weeks and Yahoo starts answering "possibly delisted; no price data
+# found" forever. A fresh session recovers instantly (a new process proved
+# this while the 3-week-old engine process was blind).
+_RESET_AFTER_FAILURES = 3
+
+
+def get_feed_health() -> dict:
+    """Snapshot of data-feed health for /api/status and the watchdog."""
+    with _feed_lock:
+        st = dict(_feed_state)
+    st["last_success"] = st["last_success"].isoformat() if st["last_success"] else None
+    st["last_failure"] = st["last_failure"].isoformat() if st["last_failure"] else None
+    st["healthy"] = st["consecutive_failures"] < _RESET_AFTER_FAILURES
+    return st
+
+
+def _record_feed_success():
+    with _feed_lock:
+        _feed_state["consecutive_failures"] = 0
+        _feed_state["last_success"] = datetime.utcnow()
+
+
+def _record_feed_failure(error: str) -> int:
+    with _feed_lock:
+        _feed_state["consecutive_failures"] += 1
+        _feed_state["last_failure"] = datetime.utcnow()
+        _feed_state["last_error"] = error[:300]
+        return _feed_state["consecutive_failures"]
+
+
+def _reset_yfinance_session():
+    """
+    Tear down cached HTTP auth state inside yfinance so the next download
+    re-authenticates from scratch (fresh cookie + crumb). Yahoo's crumb/cookie
+    pair goes stale after days/weeks in a long-running process and every
+    request then fails with "possibly delisted; no price data found".
+
+    yfinance internals vary by version (0.2.x keeps a YfData singleton; the
+    1.x line creates instances), so this is deliberately belt-and-braces:
+    clear the singleton slot if present, then sweep the live heap for YfData
+    instances and null their _crumb/_cookie. Everything is best-effort.
+    """
+    with _feed_lock:
+        _feed_state["resets"] += 1
+    logger.warning("Data feed: rebuilding yfinance session (reset #%d)", _feed_state["resets"])
+
+    try:
+        from yfinance.data import YfData
+    except Exception:
+        return
+
+    # 0.2.x: null the singleton so the next call constructs a fresh instance
+    # (new session, new cookie jar, new crumb).
+    try:
+        if hasattr(YfData, "_YfData__instance"):
+            YfData._YfData__instance = None
+    except Exception:
+        pass
+
+    # All versions: find every live YfData and wipe its auth state so the
+    # next request performs a fresh cookie+crumb handshake.
+    try:
+        import gc
+        for obj in gc.get_objects():
+            if isinstance(obj, YfData):
+                for attr in ("_crumb", "_cookie"):
+                    try:
+                        setattr(obj, attr, None)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    # Some versions persist the cookie to a disk cache — clear that too so a
+    # rotten cookie isn't immediately reloaded.
+    try:
+        import yfinance.cache as _yc
+        mgr = getattr(_yc, "_CookieCacheManager", None)
+        if mgr is not None and hasattr(_yc, "get_cookie_cache_manager"):
+            _yc.get_cookie_cache_manager().get_cookie_db().delete_cookies()
+    except Exception:
+        pass
+
+
 class MarketDataService:
     """
     Fetches and caches market data from yfinance.
     Simulates real-time bars from the most recent historical candle.
+
+    Self-healing: consecutive failed downloads trigger a full yfinance
+    session rebuild, and feed health is exported globally so a data outage
+    can never again be silent.
     """
 
     def __init__(self):
         self._cache: dict[str, pd.DataFrame] = {}
         self._cache_time: dict[str, datetime] = {}
-        self._cache_ttl_seconds = 60  # Refresh cache every 60 seconds
+        # 4 minutes: the engine scans every 60s but a 5m bar only completes
+        # every 5 minutes — refetching the same 10d of bars twice a minute
+        # was pure rate-limit bait (2,880 downloads/day for ~288 new bars).
+        self._cache_ttl_seconds = 240
+        # On failure, serve stale cache for up to this long so one bad fetch
+        # doesn't blind position monitoring.
+        self._stale_ok_seconds = 3600
 
     def _get_ticker(self, symbol: str) -> str:
         return SYMBOL_MAP.get(symbol.upper(), symbol)
@@ -51,7 +163,8 @@ class MarketDataService:
     ) -> pd.DataFrame:
         """
         Download OHLCV data for a symbol and return a cleaned DataFrame.
-        Results are cached for _cache_ttl_seconds.
+        Results are cached for _cache_ttl_seconds; on download failure the
+        stale cache is served (up to _stale_ok_seconds) while the feed heals.
         """
         cache_key = f"{symbol}_{period}_{interval}"
         now = datetime.utcnow()
@@ -65,6 +178,8 @@ class MarketDataService:
         ticker = self._get_ticker(symbol)
         logger.info("Fetching historical data for %s (%s) period=%s interval=%s", symbol, ticker, period, interval)
 
+        df = pd.DataFrame()
+        error = ""
         try:
             df = yf.download(
                 ticker,
@@ -75,12 +190,40 @@ class MarketDataService:
                 threads=False,
             )
         except Exception as exc:
+            error = repr(exc)
             logger.error("yfinance download failed for %s: %s", symbol, exc)
-            return pd.DataFrame()
 
-        if df.empty:
-            logger.warning("No data returned for %s", symbol)
-            return df
+        if df is None or df.empty:
+            failures = _record_feed_failure(error or f"empty response for {ticker}")
+            logger.warning("No data returned for %s (consecutive feed failures: %d)", symbol, failures)
+
+            # Self-heal: stale session tokens make Yahoo answer "possibly
+            # delisted" forever. Rebuild the session and retry once, with a
+            # small backoff so we don't hammer while rate-limited.
+            if failures >= _RESET_AFTER_FAILURES and failures % _RESET_AFTER_FAILURES == 0:
+                _reset_yfinance_session()
+                _time.sleep(2 + random.uniform(0, 3))
+                try:
+                    df = yf.download(
+                        ticker, period=period, interval=interval,
+                        auto_adjust=True, progress=False, threads=False,
+                    )
+                    if df is not None and not df.empty:
+                        logger.warning("Data feed RECOVERED for %s after session rebuild", symbol)
+                except Exception as exc:
+                    logger.error("Retry after session rebuild failed for %s: %s", symbol, exc)
+                    df = pd.DataFrame()
+
+            if df is None or df.empty:
+                # Serve stale cache rather than blinding position monitoring.
+                if cache_key in self._cache:
+                    age = (now - self._cache_time[cache_key]).total_seconds()
+                    if age < self._stale_ok_seconds:
+                        logger.warning("Serving %ds-stale cache for %s while feed is down", int(age), symbol)
+                        return self._cache[cache_key].copy()
+                return pd.DataFrame()
+
+        _record_feed_success()
 
         # Flatten multi-level columns if present (yfinance sometimes returns them)
         if isinstance(df.columns, pd.MultiIndex):

@@ -215,6 +215,7 @@ app.add_middleware(
 
 @app.get("/api/status")
 async def get_status():
+    from backend.services.market_data import get_feed_health
     sched = get_scheduler_state()
     sessions = market_data.get_sessions_status()
     orb = _trade_window_status()
@@ -224,6 +225,9 @@ async def get_status():
         "prop_firm": settings.PROP_FIRM,
         "strategy": settings.STRATEGY,
         "trading_enabled": settings.TRADING_ENABLED,
+        # Data-feed health — a blind engine must never look healthy. The
+        # watchdog and dashboard both read this.
+        "data_feed": get_feed_health(),
         # ORB trade window: the strategy only fires 9:35–14:00 ET on weekdays.
         # Used by the UI to show ARMED (enabled, waiting) vs LIVE (in-window).
         "orb_window_active": orb["active"],
