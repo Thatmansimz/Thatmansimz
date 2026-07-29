@@ -501,7 +501,15 @@ async def funnel(db: Session = Depends(get_db)):
     rej = _rejection_summary()
 
     # Plain-English read of the funnel, so the operator never has to interpret.
-    if camp["signals"] == 0 and camp["bars"] > 0:
+    # bars_evaluated / signals_rejected are newer counters than signals / taken,
+    # so immediately after a deploy the top of the funnel is shorter than the
+    # middle. Say so rather than drawing a confident conclusion from half a
+    # funnel — a wrong "healthy" is exactly the kind of reassurance that hid
+    # the 25-day outage.
+    if camp["bars"] < camp["signals"]:
+        verdict = ("⏳ Warming up — bar/rejection counters started at the last deploy. "
+                   "The funnel reads correctly from the next full trading day.")
+    elif camp["signals"] == 0 and camp["bars"] > 0:
         verdict = "No setups found yet — the strategy is looking and finding nothing."
     elif camp["signals"] > 0 and camp["taken"] == 0:
         verdict = ("⚠ Setups ARE firing but NONE became trades — something downstream "

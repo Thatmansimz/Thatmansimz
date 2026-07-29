@@ -672,7 +672,14 @@ function FunnelPanel({ f }: { f: Funnel | null }) {
     { label: "TRADES TAKEN", value: c.taken, color: c.taken > 0 ? "#00ff88" : "#334155",
       hint: "actually sent to the broker" },
   ];
-  const max = Math.max(1, c.bars);
+  // Scale to the LARGEST stage, not to bars. bars_evaluated and
+  // signals_rejected are newer counters than signals/taken, so right after a
+  // deploy the top of the funnel can legitimately be smaller than the middle —
+  // scaling off bars alone made every other stage overflow its track.
+  const max = Math.max(1, c.bars, c.signals, c.rejected, c.taken);
+  // Partial history: the funnel can't be read as a funnel until the top stage
+  // has been counting at least as long as the rest.
+  const warming = c.bars < c.signals;
 
   return (
     <div className="glass-bright rounded-2xl p-5">
@@ -722,6 +729,16 @@ function FunnelPanel({ f }: { f: Funnel | null }) {
           </div>
         ))}
       </div>
+
+      {warming && (
+        <div className="rounded-xl p-3 mb-3" style={{ background: "#00d4ff10", border: "1px solid #00d4ff33" }}>
+          <p className="text-[11px] font-mono-hud leading-relaxed" style={{ color: "#00d4ff" }}>
+            ⏳ WARMING UP — &quot;bars evaluated&quot; and &quot;rejected&quot; started counting at the last
+            deploy, while &quot;setups&quot; and &quot;taken&quot; carry today&apos;s full history. The funnel
+            reads correctly from the next full trading day.
+          </p>
+        </div>
+      )}
 
       <div className="rounded-xl p-3 mb-3" style={{
         background: warn ? "#ffaa0012" : "#00ff8810",
