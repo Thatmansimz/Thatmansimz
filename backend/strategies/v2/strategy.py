@@ -67,6 +67,18 @@ class MultiSessionStrategy(BaseStrategy):
         # Asia kill zone (8–10 PM ET) has enough volatility to reach 2R.
         # Tested grid: kz-only + 2.0R + no macro → PF 1.01, +$27 (first positive).
         # kz-only + 1.5R → -$1,430 (too tight). Original all-night → -$878.
+        # ── Config-driven research settings ──
+        # These live here (not in the scheduler) so the LIVE engine and
+        # scripts/v2_backtest.py — which both construct this class — cannot
+        # drift apart. Live-vs-backtest divergence has already cost this
+        # project a month; every behavioural knob belongs in one place.
+        # Defaults reproduce the original all-session, session-default-R:R
+        # behaviour so earlier backtests stay reproducible.
+        sess = getattr(config, "V2_SESSIONS", None) if config else None
+        self.enabled_sessions = set(sess) if sess else {"ASIA", "LONDON", "NEW_YORK"}
+        self.target_rr_override = float(getattr(config, "V2_TARGET_RR", 0.0) or 0.0) if config else 0.0
+        self.fixed_risk_dollars = float(getattr(config, "V2_RISK_PER_TRADE", 0.0) or 0.0) if config else 0.0
+
         self.asia_kill_zone_only = True    # only enter during 8–10 PM ET kill zone
         self.asia_max_rr = 2.0            # match London/NY — kill zone moves are big enough
         self.asia_require_macro_zone = False  # macro filter selected bad entries, removed
@@ -104,6 +116,11 @@ class MultiSessionStrategy(BaseStrategy):
         session = S.active_session(ts)
         if session is None:
             return self._state(ts, symbol, "flat", reason="No active session")
+
+        # Session gate: only trade sessions this configuration enables.
+        if session.name not in self.enabled_sessions:
+            return self._state(ts, symbol, "flat", session=session,
+                               reason=f"{session.name} not enabled (V2_SESSIONS)")
 
         overlap = S.in_overlap(ts)
         kill = S.in_kill_zone(ts, session)
@@ -203,7 +220,9 @@ class MultiSessionStrategy(BaseStrategy):
         # oversized relative to the $500-1500 profit window — the strategy's
         # own in_monetary_window flag read False on essentially every Asia
         # setup, and nothing ever looked at it.
-        rr = self.asia_max_rr if session.name == "ASIA" else session.max_rr
+        rr = self.target_rr_override or (
+            self.asia_max_rr if session.name == "ASIA" else session.max_rr
+        )
         if bias == "long":
             t1 = entry + stop_dist          # 1:1
             t2 = entry + stop_dist * rr     # session R:R cap
@@ -212,6 +231,14 @@ class MultiSessionStrategy(BaseStrategy):
             t2 = entry - stop_dist * rr
 
         contracts = self._size_contracts(stop_dist, point_value, session, atr_pts, symbol, rr)
+        # Fixed-risk sizing, when configured: derive size from a risk budget
+        # instead of from a profit target. The profit-window default sizes
+        # inversely to stop width, which is what produced a $6,534 drawdown.
+        if self.fixed_risk_dollars > 0:
+            per_contract_risk = stop_dist * point_value
+            if per_contract_risk > 0:
+                contracts = max(1, min(self.max_contracts,
+                                       int(self.fixed_risk_dollars / per_contract_risk)))
         est_risk = stop_dist * point_value * contracts
         est_target = abs(t2 - entry) * point_value * contracts
 

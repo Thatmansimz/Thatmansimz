@@ -37,8 +37,18 @@ def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
              asia_max_rr: float = 2.0,
              asia_require_macro_zone: bool = False,
              commission_per_side: float = 1.50,
-             slippage_ticks: int = 1) -> dict:
+             slippage_ticks: int = 1,
+             sessions: list | None = None,
+             target_rr: float = 0.0,
+             fixed_risk: float = 0.0) -> dict:
     strat = MultiSessionStrategy()
+    # Mirror the live engine's config knobs exactly — same class, same fields.
+    if sessions:
+        strat.enabled_sessions = set(sessions)
+    if target_rr:
+        strat.target_rr_override = float(target_rr)
+    if fixed_risk:
+        strat.fixed_risk_dollars = float(fixed_risk)
     strat.asia_kill_zone_only = asia_kill_zone_only
     strat.asia_max_rr = asia_max_rr
     strat.asia_require_macro_zone = asia_require_macro_zone
@@ -156,6 +166,13 @@ def main():
                     help="commission $/contract/side (default 1.50 → $3.00 round trip)")
     ap.add_argument("--slippage-ticks", type=int, default=1,
                     help="ticks of adverse slippage on entries and stop exits (default 1)")
+    ap.add_argument("--sessions", default=None,
+                    help="comma-separated sessions to trade, e.g. NEW_YORK "
+                         "(default: all three)")
+    ap.add_argument("--target-rr", type=float, default=0.0,
+                    help="target as a multiple of risk; 0 = session default (2.0)")
+    ap.add_argument("--fixed-risk", type=float, default=0.0,
+                    help="fixed $ risk per trade; 0 = profit-window sizing")
     ap.add_argument("--save-baseline", action="store_true",
                     help="write data/baseline.json so the dashboard can plot "
                          "this backtest against the live forward-test record")
@@ -180,13 +197,19 @@ def main():
           f"rr={args.asia_rr}  macro-zone={args.asia_macro}")
     print(f"  Friction   : ${args.commission:.2f}/side commission, "
           f"{args.slippage_ticks}-tick slippage on entries + stop exits")
+    print(f"  Config     : sessions={args.sessions or 'ALL'}  "
+          f"target_rr={args.target_rr or 'session default'}  "
+          f"fixed_risk={('$'+format(args.fixed_risk,'.0f')) if args.fixed_risk else 'profit-window'}")
     print()
     stats = simulate(df, args.symbol, args.session,
                      asia_kill_zone_only=not args.no_asia_kz_only,
                      asia_max_rr=args.asia_rr,
                      asia_require_macro_zone=args.asia_macro,
                      commission_per_side=args.commission,
-                     slippage_ticks=args.slippage_ticks)
+                     slippage_ticks=args.slippage_ticks,
+                     sessions=args.sessions.split(",") if args.sessions else None,
+                     target_rr=args.target_rr,
+                     fixed_risk=args.fixed_risk)
     if "error" in stats:
         print(f"  No trades: {stats['error']}")
         sys.exit(0)

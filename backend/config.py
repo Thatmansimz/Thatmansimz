@@ -38,6 +38,23 @@ class Settings(BaseSettings):
     # ORB validated at 1R targets — keep the min R:R gate at 1.0 so they pass.
     MIN_RISK_REWARD_RATIO: float = 1.0
 
+    # ── V2 configuration (research-driven) ──
+    # Which sessions the V2 engine is allowed to trade. Research on 60d/171
+    # trades: ALL sessions = PF 0.92 (-$3,411); LONDON -$3,842 and ASIA -$1,328
+    # were the bleeders; NEW_YORK was the only positive session (+$1,759).
+    V2_SESSIONS: List[str] = ["ASIA", "LONDON", "NEW_YORK"]
+    # Target as a multiple of risk. 0 = use each session's own max_rr (2.0).
+    # Research: 3.0R was the best target across a 2.5-3.5R plateau, improving
+    # the full 60d period by ~$3,050 vs 2.0R. Mechanism: a bigger target lowers
+    # the break-even win rate (33.8% at 2R -> 25.4% at 3R) and spreads fixed
+    # per-contract commission over a larger win.
+    V2_TARGET_RR: float = 0.0
+    # Fixed dollar risk per trade. 0 = V2's default "profit window" sizing,
+    # which sizes INVERSELY to stop width and produced a $6,534 max drawdown —
+    # 2-3x every prop firm's limit. Set this to derive size from the drawdown
+    # budget instead of from a profit target.
+    V2_RISK_PER_TRADE: float = 0.0
+
     # Active strategy: "orb" | "momentum" | "ml" | "multi_session" (V2)
     # NOTE: "orb" remains the validated default. "multi_session" is the V2
     # business-partner engine — opt in explicitly via STRATEGY=multi_session.
