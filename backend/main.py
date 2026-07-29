@@ -211,6 +211,31 @@ app.add_middleware(
 )
 
 
+CLOSED_STATUSES = ["closed", "stopped_out", "target_hit"]
+
+
+def _campaign_trades(db: Session):
+    """
+    Closed trades belonging to the ACTIVE forward-test campaign only.
+
+    Without this scope the analytics blend the old Stage-1 ORB replay trades
+    (a different strategy, a different instrument set, months earlier) into the
+    live V2 record — which produces confident, completely false conclusions
+    like "MES is bleeding, consider dropping it" for an instrument the engine
+    is not trading at all. The audited record must contain only the campaign.
+
+    Returns (trades, scope_label). Falls back to all trades when no campaign
+    is running, so pre-campaign analysis still works.
+    """
+    from backend.services.forward_test import get_campaign
+    q = db.query(Trade).filter(Trade.status.in_(CLOSED_STATUSES))
+    meta = get_campaign()
+    if not meta:
+        return q.all(), "all-time"
+    start = date.fromisoformat(meta["start_date"])
+    return q.filter(Trade.trade_date >= start).all(), f"campaign since {meta['start_date']}"
+
+
 # ── Status & Health ───────────────────────────────────────────────────────────
 
 @app.get("/api/status")
@@ -400,9 +425,10 @@ async def today_stats(db: Session = Depends(get_db)):
 
 @app.get("/api/stats/performance")
 async def performance_stats(db: Session = Depends(get_db)):
-    all_trades = db.query(Trade).filter(Trade.status.in_(["closed", "stopped_out", "target_hit"])).all()
+    all_trades, scope = _campaign_trades(db)
     if not all_trades:
-        return {"total_trades": 0, "win_rate": 0, "avg_win": 0, "avg_loss": 0, "profit_factor": 0}
+        return {"total_trades": 0, "win_rate": 0, "avg_win": 0, "avg_loss": 0,
+                "profit_factor": 0, "scope": scope}
 
     wins = [t for t in all_trades if (t.net_pnl or 0) > 0]
     losses = [t for t in all_trades if (t.net_pnl or 0) <= 0]
@@ -414,6 +440,7 @@ async def performance_stats(db: Session = Depends(get_db)):
     gross_losses = abs(sum(t.net_pnl for t in losses)) if losses else 0
 
     return {
+        "scope": scope,
         "total_trades": len(all_trades),
         "wins": len(wins),
         "losses": len(losses),
@@ -440,9 +467,7 @@ async def trade_insights(db: Session = Depends(get_db)):
     UTC = pytz.utc
     SESSION_LABEL = {"ASIA": "Asia", "LONDON": "London", "NEW_YORK": "New York"}
 
-    trades = db.query(Trade).filter(
-        Trade.status.in_(["closed", "stopped_out", "target_hit"])
-    ).all()
+    trades, scope = _campaign_trades(db)
 
     def stats_for(subset) -> dict:
         n = len(subset)
@@ -468,7 +493,7 @@ async def trade_insights(db: Session = Depends(get_db)):
 
     if not trades:
         return {
-            "total_trades": 0, "overall": stats_for([]), "win_loss_ratio": 0.0,
+            "total_trades": 0, "scope": scope, "overall": stats_for([]), "win_loss_ratio": 0.0,
             "by_direction": {}, "by_symbol": {}, "by_session": {},
             "by_exit": {}, "by_confidence": {},
             "strengths": [], "weaknesses": [],
@@ -560,6 +585,7 @@ async def trade_insights(db: Session = Depends(get_db)):
 
     return {
         "total_trades": overall["trades"],
+        "scope": scope,
         "overall": overall,
         "win_loss_ratio": wl_ratio,
         "by_direction": by_direction,

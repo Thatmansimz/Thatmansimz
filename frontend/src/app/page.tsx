@@ -82,6 +82,7 @@ type ForwardTest = {
 };
 type Insights = {
   total_trades: number;
+  scope?: string;
   overall: Bucket;
   win_loss_ratio: number;
   by_direction: Record<string, Bucket>;
@@ -549,7 +550,7 @@ function InsightsPanel({ insights, onRun, onReset, running }: {
   return (
     <div className="glass-bright rounded-2xl p-5">
       <div className="flex items-start justify-between">
-        <SectionHeader title="Trade Insights" sub={`${insights.total_trades} trades analyzed · expectancy $${insights.overall.expectancy.toFixed(0)}/trade`} />
+        <SectionHeader title="Trade Insights" sub={`${insights.total_trades} trades · ${insights.scope ?? "all-time"} · expectancy $${insights.overall.expectancy.toFixed(0)}/trade`} />
         <div className="flex items-center gap-2">
           <button onClick={onRun} disabled={running} className="btn-cyan px-3 py-1.5 rounded-lg text-[10px] disabled:opacity-50">
             {running ? "RUNNING..." : "↻ RE-RUN"}
