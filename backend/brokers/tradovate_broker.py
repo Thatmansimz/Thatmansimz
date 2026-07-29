@@ -12,11 +12,34 @@ TRADOVATE_DEMO_URL = "https://demo.tradovateapi.com/v1"
 
 class TradovateBroker(BaseBroker):
     """
-    Tradovate futures broker integration.
-    Supports MES, MNQ, MGC and other CME micro futures.
-    Automation is allowed on Tradovate — confirm with prop firm rules first.
+    Tradovate futures broker integration (MES, MNQ, MGC and other CME micros).
 
-    Demo account: https://trader.tradovate.com (free demo)
+    ⚠️  NOT READY FOR LIVE USE — verified 2026-07-29. Three blockers:
+
+    1. ACCOUNT ELIGIBILITY. Tradovate does NOT grant API access to prop-firm or
+       evaluation accounts. An API key requires a live, funded Tradovate
+       brokerage account holding $1,000+ PLUS the paid API Access add-on
+       (~$25/mo). So this class only works against your OWN funded account —
+       it is not a route into a prop-firm evaluation.
+
+    2. get_last_fill() IS NOT IMPLEMENTED. It inherits the base stub returning
+       None. ExecutionService._reconcile_closed_trade deliberately refuses to
+       close a trade without a genuine exit fill (it used to invent one), so
+       with this broker EVERY trade would hang open forever, log an error each
+       cycle, and the one-position-per-symbol guard would then block all future
+       signals. Must implement fill lookup (/fill/list or /order/item) before
+       any live use.
+
+    3. update_stop() IS NOT IMPLEMENTED either, so the V2 trailing stop would
+       silently never reach the exchange — the local DB would show a trailed
+       stop the broker has never heard of.
+
+    Also unhandled: Tradovate expects a contract symbol with expiry (e.g.
+    "MNQU6"), not the bare root "MNQ" this engine passes, and entries are sent
+    as Limit at the signal price with no fill confirmation.
+
+    Demo account: https://trader.tradovate.com (free demo, good for wiring
+    tests — but demo API access has its own entitlement requirements).
     """
 
     def __init__(self, config):

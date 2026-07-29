@@ -9,7 +9,14 @@ logger = logging.getLogger(__name__)
 class AlpacaBroker(BaseBroker):
     """
     Alpaca Markets broker integration (uses alpaca-py SDK).
-    Supports paper trading via ALPACA_BASE_URL=https://paper-api.alpaca.markets
+
+    ⚠️  WRONG INSTRUMENT CLASS for this platform. Alpaca trades equities, ETFs,
+    options and crypto — NOT CME futures. MES/MNQ/MGC cannot be traded here at
+    all, so this broker is unusable for the V2 multi-session strategy or V1 ORB
+    as configured. Kept only for a possible future equities/ETF variant.
+    For futures, see TradovateBroker (own funded account) or a prop firm's own
+    API (TopstepX).
+
     Free paper trading account: https://alpaca.markets
     """
 

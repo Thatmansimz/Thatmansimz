@@ -116,9 +116,18 @@ class Settings(BaseSettings):
                 "profit_target": 3000.0,
                 "account_size": 50000.0,
                 "trailing_drawdown": True,
-                "allows_automation": False,
+                # UPDATED 2026-07-29 (was False — that predated TopstepX).
+                # TopstepX launched its own API in late April 2026 and now
+                # permits automation in BOTH the Trading Combine (evaluation)
+                # and funded accounts. ~$29/mo for API access.
+                # HARD CONSTRAINT: Topstep's Terms require all trading activity
+                # to originate from your PERSONAL DEVICE — VPS, VPN and remote
+                # servers are prohibited. This engine must therefore keep
+                # running on the Mac; it can never be moved to a cloud host.
+                "allows_automation": True,
                 "days_to_complete": None,
-                "notes": "Trailing drawdown, NO automation allowed - manual only",
+                "notes": "Trailing drawdown. TopstepX API automation allowed "
+                         "(eval + funded). Personal device only — no VPS/VPN.",
             },
             "traderfi": {
                 "name": "TraderFi",
