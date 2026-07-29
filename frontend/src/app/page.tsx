@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useState, useCallback } from "react";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
+  BarChart, Bar, Cell, ComposedChart, Line, CartesianGrid, Legend,
+} from "recharts";
 import { Speedometer } from "../components/Speedometer";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -79,6 +82,41 @@ type ForwardTest = {
   trades_closed?: number; wins?: number; losses?: number; win_rate?: number;
   uptime_today_pct?: number;
   snapshots?: FwtSnapshot[];
+};
+type FunnelStage = { bars: number; signals: number; rejected: number; taken: number };
+type Funnel = {
+  scope?: string;
+  campaign: FunnelStage;
+  today: FunnelStage;
+  conversion_pct: number;
+  rejection_reasons: Record<string, number>;
+  last_rejection?: string | null;
+  verdict: string;
+};
+type RecordPoint = { n: number; date: string; equity: number; drawdown: number; pnl: number; r?: number | null };
+type RecordGroup = { trades: number; wins: number; pnl: number; win_rate: number; expectancy: number };
+type TradeRecord = {
+  scope?: string;
+  start_date?: string;
+  days_elapsed?: number;
+  target_days?: number;
+  start_equity: number;
+  summary: {
+    trades: number; wins: number; losses: number; win_rate: number;
+    net_pnl: number; profit_factor: number; expectancy: number;
+    avg_win: number; avg_loss: number; payoff: number;
+    max_drawdown: number; max_drawdown_pct: number;
+    avg_r?: number | null; return_pct: number;
+  };
+  curve: RecordPoint[];
+  r_distribution: { bucket: string; count: number }[];
+  by_session: Record<string, RecordGroup>;
+  by_direction: Record<string, RecordGroup>;
+  by_symbol: Record<string, RecordGroup>;
+  baseline?: { total_trades: number; win_rate: number; profit_factor?: number | null;
+               total_pnl: number; days: number; period?: string; symbol?: string } | null;
+  expected?: { per_day: number; to_date: number; trades_per_day: number;
+               win_rate?: number; profit_factor?: number | null; expectancy: number } | null;
 };
 type Insights = {
   total_trades: number;
@@ -615,6 +653,180 @@ function InsightsPanel({ insights, onRun, onReset, running }: {
   );
 }
 
+/* ── THE FUNNEL ──
+   bars evaluated → setups found → rejected → trades taken.
+   Exists because "no trades" has two causes that used to look identical:
+   a quiet market, and an engine silently discarding every setup it found.
+   One of those cost this project 25 days. The middle number is the point. */
+function FunnelPanel({ f }: { f: Funnel | null }) {
+  if (!f) return null;
+  const c = f.campaign;
+  const warn = f.verdict.startsWith("⚠");
+  const stages = [
+    { label: "BARS EVALUATED", value: c.bars, color: "#475569",
+      hint: "completed 5m candles the strategy judged" },
+    { label: "SETUPS FOUND", value: c.signals, color: "#00d4ff",
+      hint: "two-indications patterns that fired" },
+    { label: "REJECTED", value: c.rejected, color: c.rejected > 0 ? "#ffaa00" : "#334155",
+      hint: "turned away by a risk gate — reasons below" },
+    { label: "TRADES TAKEN", value: c.taken, color: c.taken > 0 ? "#00ff88" : "#334155",
+      hint: "actually sent to the broker" },
+  ];
+  const max = Math.max(1, c.bars);
+
+  return (
+    <div className="glass-bright rounded-2xl p-5">
+      <div className="flex items-start justify-between flex-wrap gap-2 mb-4">
+        <div>
+          <span className="font-display text-xs font-bold tracking-[0.3em] uppercase" style={{ color: "#00d4ff" }}>
+            ◆ The Funnel
+          </span>
+          <p className="text-[10px] font-mono-hud mt-1" style={{ color: "#475569" }}>
+            why the engine is or isn&apos;t trading · {f.scope}
+          </p>
+        </div>
+        <div className="text-right">
+          <span className="text-[9px] tracking-widest uppercase font-mono-hud block" style={{ color: "#334155" }}>
+            conversion
+          </span>
+          <span className="text-lg font-bold font-mono-hud" style={{ color: "#00d4ff" }}>
+            {f.conversion_pct}%
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-2 mb-4">
+        {stages.map((s) => (
+          <div key={s.label} className="flex items-center gap-3" title={s.hint}>
+            <span className="text-[9px] font-mono-hud tracking-widest w-32 shrink-0" style={{ color: "#475569" }}>
+              {s.label}
+            </span>
+            <div className="flex-1 h-6 rounded-md overflow-hidden relative" style={{ background: "#0a1525" }}>
+              <div style={{
+                width: `${Math.max(s.value > 0 ? 4 : 0, (s.value / max) * 100)}%`,
+                height: "100%",
+                background: `linear-gradient(90deg, ${s.color}55, ${s.color})`,
+                boxShadow: s.value > 0 ? `0 0 10px ${s.color}66` : "none",
+                borderRadius: 6, transition: "width 0.8s ease",
+              }} />
+              <span className="absolute inset-0 flex items-center px-2 text-[11px] font-mono-hud font-bold"
+                    style={{ color: s.value > 0 ? "#fff" : "#334155" }}>
+                {s.value.toLocaleString()}
+              </span>
+            </div>
+            <span className="text-[9px] font-mono-hud w-16 text-right shrink-0" style={{ color: "#334155" }}>
+              today {(f.today as any)[s.label === "BARS EVALUATED" ? "bars"
+                : s.label === "SETUPS FOUND" ? "signals"
+                : s.label === "REJECTED" ? "rejected" : "taken"]}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-xl p-3 mb-3" style={{
+        background: warn ? "#ffaa0012" : "#00ff8810",
+        border: `1px solid ${warn ? "#ffaa0044" : "#00ff8833"}`,
+      }}>
+        <p className="text-[11px] font-mono-hud leading-relaxed" style={{ color: warn ? "#ffaa00" : "#00ff88" }}>
+          {f.verdict}
+        </p>
+      </div>
+
+      {Object.keys(f.rejection_reasons || {}).length > 0 && (
+        <div>
+          <p className="text-[9px] tracking-widest uppercase font-mono-hud mb-1.5" style={{ color: "#334155" }}>
+            why signals were turned away
+          </p>
+          <div className="space-y-1">
+            {Object.entries(f.rejection_reasons).map(([reason, n]) => (
+              <div key={reason} className="flex items-center justify-between text-[10px] font-mono-hud">
+                <span style={{ color: "#94a3b8" }}>{reason}</span>
+                <span style={{ color: "#ffaa00" }}>×{n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── LIVE POSITION — when a trade is open, it should dominate ── */
+function LivePositionCard({ trades }: { trades: Trade[] }) {
+  const open = trades.filter((t) => t.status === "open");
+  if (open.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      {open.map((t) => {
+        const long = t.side === "long";
+        const risk = Math.abs((t.entry_price ?? 0) - (t.stop_loss ?? 0));
+        const cur = t.exit_price ?? t.entry_price ?? 0;
+        const move = long ? cur - (t.entry_price ?? 0) : (t.entry_price ?? 0) - cur;
+        const r = risk > 0 ? move / risk : 0;
+        const target = t.take_profit ?? 0;
+        const targetR = risk > 0 ? Math.abs(target - (t.entry_price ?? 0)) / risk : 2;
+        const pct = Math.max(0, Math.min(100, (r / (targetR || 2)) * 100));
+        const good = r >= 0;
+        const color = good ? "#00ff88" : "#ff3366";
+        return (
+          <div key={t.id} className="rounded-2xl p-5"
+               style={{ background: "radial-gradient(ellipse at 20% 0%, #10243f 0%, #080e1a 70%)",
+                        border: `1px solid ${color}44`, boxShadow: `0 0 40px ${color}18` }}>
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-display font-bold"
+                      style={{ background: `${color}22`, border: `1px solid ${color}55`, color }}>
+                  {long ? "▲ LONG" : "▼ SHORT"}
+                </span>
+                <span className="text-xl font-bold font-mono-hud text-white">{t.symbol}</span>
+                <span className="text-[11px] font-mono-hud" style={{ color: "#475569" }}>×{t.qty}</span>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-mono-hud font-bold tracking-widest"
+                      style={{ background: "#00d4ff18", border: "1px solid #00d4ff44", color: "#00d4ff",
+                               animation: "green-pulse 2s infinite" }}>
+                  POSITION OPEN
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-2xl font-bold font-mono-hud" style={{ color, textShadow: `0 0 16px ${color}88` }}>
+                  {r >= 0 ? "+" : ""}{r.toFixed(2)}R
+                </span>
+              </div>
+            </div>
+
+            <div className="h-3 rounded-full overflow-hidden mb-2 relative" style={{ background: "#0a1525" }}>
+              <div style={{ width: `${pct}%`, height: "100%",
+                            background: `linear-gradient(90deg, ${color}66, ${color})`,
+                            boxShadow: `0 0 10px ${color}`, borderRadius: 9999,
+                            transition: "width 1s ease" }} />
+            </div>
+            <div className="flex justify-between text-[9px] font-mono-hud mb-4" style={{ color: "#334155" }}>
+              <span>STOP {t.stop_loss?.toFixed(2)}</span>
+              <span>ENTRY {t.entry_price?.toFixed(2)}</span>
+              <span>TARGET {target.toFixed(2)} ({targetR.toFixed(1)}R)</span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { l: "Entry", v: `$${t.entry_price?.toFixed(2)}` },
+                { l: "Current", v: `$${cur.toFixed(2)}` },
+                { l: "Unrealized", v: `${(t.pnl ?? 0) >= 0 ? "+" : ""}$${(t.pnl ?? 0).toFixed(2)}`,
+                  c: (t.pnl ?? 0) >= 0 ? "#00ff88" : "#ff3366" },
+                { l: "Risk", v: `$${(risk * (t.symbol === "MNQ" ? 2 : 5) * t.qty).toFixed(0)}` },
+              ].map((x) => (
+                <div key={x.l} className="rounded-xl py-2 px-3" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+                  <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>{x.l}</p>
+                  <p className="text-sm font-bold font-mono-hud mt-0.5" style={{ color: x.c ?? "#e2e8f0" }}>{x.v}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Section header ── */
 function SectionHeader({ title, sub }: { title: string; sub?: string }) {
   return (
@@ -729,6 +941,247 @@ function ForwardTestCard({ fwt }: { fwt: ForwardTest | null }) {
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   THE RECORD — the credible view.
+   No gauges, no telemetry, no live drama. Just the numbers someone with money
+   asks for: equity curve, drawdown, R distribution, session breakdown, and
+   the backtest baseline this campaign exists to test. Boring on purpose;
+   boring is what credible looks like.
+   ══════════════════════════════════════════════════════════════════════════ */
+function StatCell({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+  return (
+    <div className="rounded-xl py-3 px-4" style={{ background: "#0a1525", border: "1px solid #1a2d4a" }}>
+      <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>{label}</p>
+      <p className="text-lg font-bold font-mono-hud mt-0.5" style={{ color: color ?? "#e2e8f0" }}>{value}</p>
+      {sub && <p className="text-[9px] font-mono-hud mt-0.5" style={{ color: "#334155" }}>{sub}</p>}
+    </div>
+  );
+}
+
+function GroupTable({ title, groups }: { title: string; groups: Record<string, RecordGroup> }) {
+  const rows = Object.entries(groups).sort((a, b) => b[1].pnl - a[1].pnl);
+  if (!rows.length) return null;
+  return (
+    <div>
+      <p className="text-[9px] tracking-widest uppercase font-mono-hud mb-2" style={{ color: "#475569" }}>{title}</p>
+      <div className="rounded-xl overflow-hidden" style={{ border: "1px solid #1a2d4a" }}>
+        <table className="w-full text-[11px] font-mono-hud">
+          <thead>
+            <tr style={{ background: "#0a1525", color: "#334155" }}>
+              <th className="text-left px-3 py-2 font-normal">Group</th>
+              <th className="text-right px-3 py-2 font-normal">Trades</th>
+              <th className="text-right px-3 py-2 font-normal">Win %</th>
+              <th className="text-right px-3 py-2 font-normal">Net P&L</th>
+              <th className="text-right px-3 py-2 font-normal">$/trade</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([k, g]) => (
+              <tr key={k} style={{ borderTop: "1px solid #1a2d4a" }}>
+                <td className="px-3 py-2" style={{ color: "#e2e8f0" }}>{k}</td>
+                <td className="px-3 py-2 text-right" style={{ color: "#94a3b8" }}>{g.trades}</td>
+                <td className="px-3 py-2 text-right" style={{ color: "#94a3b8" }}>{g.win_rate}%</td>
+                <td className="px-3 py-2 text-right font-bold" style={{ color: g.pnl >= 0 ? "#00ff88" : "#ff3366" }}>
+                  {g.pnl >= 0 ? "+" : ""}${g.pnl.toFixed(2)}
+                </td>
+                <td className="px-3 py-2 text-right" style={{ color: g.expectancy >= 0 ? "#00ff88" : "#ff3366" }}>
+                  {g.expectancy >= 0 ? "+" : ""}${g.expectancy.toFixed(0)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function RecordView({ rec }: { rec: TradeRecord | null }) {
+  if (!rec) {
+    return <div className="glass-bright rounded-2xl p-10 text-center text-xs font-mono-hud"
+                style={{ color: "#334155" }}>LOADING RECORD…</div>;
+  }
+  const s = rec.summary;
+  const n = s.trades;
+
+  // Live vs backtest expectation, drawn on the same axis. This is the single
+  // question the whole 60-day campaign exists to answer.
+  const curve = rec.curve.map((p) => ({
+    ...p,
+    expected: rec.expected
+      ? rec.start_equity + (rec.expected.expectancy * p.n)
+      : undefined,
+  }));
+
+  const pf = s.profit_factor;
+  const pfStr = Number.isFinite(pf) ? pf.toFixed(2) : "∞";
+  const sampleWarn = n < 30;
+
+  return (
+    <div className="space-y-6">
+      {/* Header + honesty banner */}
+      <div className="glass-bright rounded-2xl p-5">
+        <div className="flex items-start justify-between flex-wrap gap-3">
+          <div>
+            <h2 className="font-display text-sm font-bold tracking-[0.25em] uppercase" style={{ color: "#e2e8f0" }}>
+              Forward-Test Record
+            </h2>
+            <p className="text-[11px] font-mono-hud mt-1" style={{ color: "#475569" }}>
+              {rec.scope} · day {rec.days_elapsed} of {rec.target_days} · paper · MNQ
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] tracking-widest uppercase font-mono-hud" style={{ color: "#334155" }}>net p&l</p>
+            <p className="text-2xl font-bold font-mono-hud"
+               style={{ color: s.net_pnl >= 0 ? "#00ff88" : "#ff3366" }}>
+              {s.net_pnl >= 0 ? "+" : ""}${s.net_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-[10px] font-mono-hud" style={{ color: "#475569" }}>
+              {s.return_pct >= 0 ? "+" : ""}{s.return_pct}% on ${rec.start_equity.toLocaleString()}
+            </p>
+          </div>
+        </div>
+        {sampleWarn && (
+          <div className="mt-4 rounded-xl p-3" style={{ background: "#ffaa0010", border: "1px solid #ffaa0033" }}>
+            <p className="text-[11px] font-mono-hud" style={{ color: "#ffaa00" }}>
+              ⚠ SAMPLE TOO SMALL — {n} trade{n === 1 ? "" : "s"}. At a ~41% win rate these figures are
+              dominated by variance, not edge. Treat as provisional until ~40 trades.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* The numbers */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <StatCell label="Trades" value={`${n}`} sub={`${s.wins}W / ${s.losses}L`} />
+        <StatCell label="Win Rate" value={`${s.win_rate}%`} color="#00d4ff" />
+        <StatCell label="Profit Factor" value={pfStr} color={pf >= 1 ? "#00ff88" : "#ff3366"}
+                  sub="gross win ÷ gross loss" />
+        <StatCell label="Expectancy" value={`${s.expectancy >= 0 ? "+" : ""}$${s.expectancy.toFixed(0)}`}
+                  color={s.expectancy >= 0 ? "#00ff88" : "#ff3366"} sub="per trade" />
+        <StatCell label="Max Drawdown" value={`-$${s.max_drawdown.toFixed(0)}`} color="#ff3366"
+                  sub={`${s.max_drawdown_pct}% of account`} />
+        <StatCell label="Payoff" value={`${s.payoff.toFixed(2)}x`} color="#a78bfa"
+                  sub={`avg win $${s.avg_win.toFixed(0)} / loss $${Math.abs(s.avg_loss).toFixed(0)}`} />
+      </div>
+
+      {/* Equity + expectation overlay */}
+      <div className="glass-bright rounded-2xl p-5">
+        <SectionHeader
+          title="Equity Curve vs Backtest Expectation"
+          sub={rec.expected
+            ? `dashed = what the backtest predicts ($${rec.expected.expectancy.toFixed(0)}/trade)`
+            : "run scripts/v2_backtest.py --save-baseline to overlay the backtest"}
+        />
+        {curve.length > 0 ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={curve} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+              <defs>
+                <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#00ff88" stopOpacity={0.28} />
+                  <stop offset="95%" stopColor="#00ff88" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="#12213a" strokeDasharray="3 3" />
+              <XAxis dataKey="n" tick={{ fontSize: 9, fill: "#334155", fontFamily: "JetBrains Mono" }}
+                     label={{ value: "trade #", position: "insideBottom", offset: -2,
+                              style: { fontSize: 9, fill: "#334155" } }} />
+              <YAxis tick={{ fontSize: 9, fill: "#334155", fontFamily: "JetBrains Mono" }}
+                     domain={["auto", "auto"]} />
+              <Tooltip contentStyle={{ background: "#0d1525", border: "1px solid #1a2d4a",
+                                       borderRadius: 10, fontSize: 11, fontFamily: "JetBrains Mono" }}
+                       formatter={(v: number, name: string) => [`$${Number(v).toFixed(2)}`, name]} />
+              <Legend wrapperStyle={{ fontSize: 10, fontFamily: "JetBrains Mono" }} />
+              <ReferenceLine y={rec.start_equity} stroke="#334155" strokeDasharray="4 4" />
+              <Area type="monotone" dataKey="equity" name="live" stroke="#00ff88" strokeWidth={2}
+                    fill="url(#eqGrad)" dot={{ r: 2, fill: "#00ff88" }} />
+              {rec.expected && (
+                <Line type="monotone" dataKey="expected" name="backtest expectation" stroke="#a78bfa"
+                      strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
+              )}
+            </ComposedChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="h-52 flex items-center justify-center text-xs font-mono-hud" style={{ color: "#1a2d4a" }}>
+            NO CLOSED TRADES YET
+          </div>
+        )}
+      </div>
+
+      {/* Underwater + R distribution */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="glass-bright rounded-2xl p-5">
+          <SectionHeader title="Drawdown (Underwater)" sub="distance below the equity high-water mark" />
+          {curve.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={curve} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#ff3366" stopOpacity={0} />
+                    <stop offset="95%" stopColor="#ff3366" stopOpacity={0.35} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#12213a" strokeDasharray="3 3" />
+                <XAxis dataKey="n" tick={{ fontSize: 9, fill: "#334155", fontFamily: "JetBrains Mono" }} />
+                <YAxis tick={{ fontSize: 9, fill: "#334155", fontFamily: "JetBrains Mono" }} />
+                <Tooltip contentStyle={{ background: "#0d1525", border: "1px solid #1a2d4a",
+                                         borderRadius: 10, fontSize: 11, fontFamily: "JetBrains Mono" }}
+                         formatter={(v: number) => [`$${Number(v).toFixed(2)}`, "drawdown"]} />
+                <ReferenceLine y={0} stroke="#334155" />
+                <Area type="monotone" dataKey="drawdown" stroke="#ff3366" strokeWidth={1.5} fill="url(#ddGrad)" dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-48 flex items-center justify-center text-xs font-mono-hud" style={{ color: "#1a2d4a" }}>—</div>
+          )}
+        </div>
+
+        <div className="glass-bright rounded-2xl p-5">
+          <SectionHeader title="R-Multiple Distribution"
+                         sub={rec.summary.avg_r != null ? `average ${rec.summary.avg_r}R per trade` : "shape of the edge"} />
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={rec.r_distribution} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+              <CartesianGrid stroke="#12213a" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="bucket" tick={{ fontSize: 8, fill: "#334155", fontFamily: "JetBrains Mono" }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 9, fill: "#334155", fontFamily: "JetBrains Mono" }} />
+              <Tooltip cursor={{ fill: "#ffffff08" }}
+                       contentStyle={{ background: "#0d1525", border: "1px solid #1a2d4a",
+                                       borderRadius: 10, fontSize: 11, fontFamily: "JetBrains Mono" }} />
+              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                {rec.r_distribution.map((d, i) => (
+                  <Cell key={i} fill={d.bucket.startsWith("-") || d.bucket.startsWith("≤") ? "#ff3366" : "#00ff88"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Breakdowns */}
+      <div className="glass-bright rounded-2xl p-5 space-y-5">
+        <SectionHeader title="Breakdown" sub="where the record comes from" />
+        <GroupTable title="By Session" groups={rec.by_session} />
+        <GroupTable title="By Direction" groups={rec.by_direction} />
+        <GroupTable title="By Instrument" groups={rec.by_symbol} />
+      </div>
+
+      {/* Baseline */}
+      {rec.baseline && (
+        <div className="glass-bright rounded-2xl p-5">
+          <SectionHeader title="Backtest Baseline"
+                         sub={`${rec.baseline.symbol ?? "MNQ"} · ${rec.baseline.period ?? "30d"} · the target this record is measured against`} />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCell label="Trades" value={`${rec.baseline.total_trades}`} sub={`over ${rec.baseline.days} days`} />
+            <StatCell label="Win Rate" value={`${rec.baseline.win_rate}%`} color="#a78bfa" />
+            <StatCell label="Profit Factor" value={rec.baseline.profit_factor?.toFixed(2) ?? "—"} color="#a78bfa" />
+            <StatCell label="Net P&L" value={`$${rec.baseline.total_pnl.toLocaleString()}`} color="#a78bfa" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [status,       setStatus]       = useState<Status | null>(null);
   const [todayStats,   setTodayStats]   = useState<Stats | null>(null);
@@ -739,6 +1192,9 @@ export default function Dashboard() {
   const [insights,     setInsights]     = useState<Insights | null>(null);
   const [dailyHistory, setDailyHistory] = useState<{ date: string; pnl: number }[]>([]);
   const [fwt,          setFwt]          = useState<ForwardTest | null>(null);
+  const [funnel,       setFunnel]       = useState<Funnel | null>(null);
+  const [rec,          setRec]          = useState<TradeRecord | null>(null);
+  const [view,         setView]         = useState<"cockpit" | "record">("cockpit");
   const [trading,      setTrading]      = useState(false);
   const [closing,      setClosing]      = useState(false);
   const [fwRunning,    setFwRunning]    = useState(false);
@@ -746,11 +1202,12 @@ export default function Dashboard() {
 
   const load = useCallback(async () => {
     try {
-      const [s, t, tr, sg, ps, pf, dh, ins, fw] = await Promise.allSettled([
+      const [s, t, tr, sg, ps, pf, dh, ins, fw, fn, rc] = await Promise.allSettled([
         api("/api/status"), api("/api/stats/today"), api("/api/trades/today"),
         api("/api/signals?limit=10"), api("/api/prop-firm/status"),
         api("/api/stats/performance"), api("/api/stats/daily"),
         api("/api/stats/insights"), api("/api/forward-test/status"),
+        api("/api/funnel"), api("/api/record"),
       ]);
       if (s.status  === "fulfilled") setStatus(s.value);
       if (t.status  === "fulfilled") setTodayStats(t.value);
@@ -761,6 +1218,8 @@ export default function Dashboard() {
       if (dh.status === "fulfilled") setDailyHistory(dh.value.slice(0, 30).reverse());
       if (ins.status === "fulfilled") setInsights(ins.value);
       if (fw.status === "fulfilled") setFwt(fw.value);
+      if (fn.status === "fulfilled") setFunnel(fn.value);
+      if (rc.status === "fulfilled") setRec(rc.value);
     } catch (_) {}
   }, []);
 
@@ -919,6 +1378,46 @@ export default function Dashboard() {
       {/* ── Ticker ── */}
       <Ticker />
 
+      {/* ── View switcher: two audiences, two screens ──
+           COCKPIT = "is my machine healthy?"  (operator)
+           RECORD  = "is this strategy credible?" (partner / prop firm) */}
+      <div className="max-w-screen-2xl mx-auto px-4 md:px-6 pt-4">
+        <div className="flex items-center gap-2">
+          {([
+            { id: "cockpit", label: "COCKPIT", sub: "live telemetry" },
+            { id: "record",  label: "THE RECORD", sub: "the audited case" },
+          ] as const).map((v) => {
+            const on = view === v.id;
+            return (
+              <button
+                key={v.id}
+                onClick={() => setView(v.id)}
+                className="px-4 py-2 rounded-xl text-left transition-all"
+                style={{
+                  background: on ? "#00d4ff14" : "#0a1525",
+                  border: `1px solid ${on ? "#00d4ff55" : "#1a2d4a"}`,
+                  boxShadow: on ? "0 0 20px #00d4ff22" : "none",
+                }}
+              >
+                <span className="block text-[11px] font-display font-bold tracking-[0.2em]"
+                      style={{ color: on ? "#00d4ff" : "#475569" }}>
+                  {v.label}
+                </span>
+                <span className="block text-[9px] font-mono-hud" style={{ color: on ? "#00d4ff88" : "#334155" }}>
+                  {v.sub}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {view === "record" ? (
+        <main className="max-w-screen-2xl mx-auto px-4 md:px-6 py-6">
+          <RecordView rec={rec} />
+        </main>
+      ) : (
+      <>
       {/* ── Global session clock ── */}
       <div className="max-w-screen-2xl mx-auto px-4 md:px-6 pt-4">
         <SessionBar sessions={status?.sessions} nowEt={status?.now_et} />
@@ -926,6 +1425,12 @@ export default function Dashboard() {
 
       {/* ── Main content ── */}
       <main className="max-w-screen-2xl mx-auto px-4 md:px-6 py-6 space-y-6">
+
+        {/* ── Live position — dominates when a trade is working ── */}
+        <LivePositionCard trades={trades} />
+
+        {/* ── The Funnel — why the engine is or isn't trading ── */}
+        <FunnelPanel f={funnel} />
 
         {/* ── Instrument Cluster ── */}
         <div
@@ -1287,6 +1792,8 @@ export default function Dashboard() {
           </span>
         </div>
       </main>
+      </>
+      )}
     </div>
   );
 }

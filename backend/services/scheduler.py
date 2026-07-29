@@ -227,6 +227,10 @@ class TradingScheduler:
                 if self._last_eval_bar.get(symbol) == last_bar_ts:
                     return  # this completed bar was already evaluated
                 self._last_eval_bar[symbol] = last_bar_ts
+                # Top of the funnel: one count per completed bar actually judged.
+                if daily_stats:
+                    daily_stats.bars_evaluated = (daily_stats.bars_evaluated or 0) + 1
+                    db.commit()
                 df = self.market_data.add_indicators(df)
                 signal_data = self.strategy.generate_signal(df, symbol)
             else:

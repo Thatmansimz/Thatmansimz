@@ -108,8 +108,14 @@ class DailyStats(Base):
 
     # Session metadata
     market_hours_traded = Column(Float, default=0.0)
+    # The funnel, persisted: how many setups the strategy found, how many the
+    # risk layer turned away, how many became trades. Without the middle number
+    # a silently-blocked engine is indistinguishable from a quiet market — the
+    # exact ambiguity that cost this project 25 days.
     signals_generated = Column(Integer, default=0)
+    signals_rejected = Column(Integer, default=0)
     signals_taken = Column(Integer, default=0)
+    bars_evaluated = Column(Integer, default=0)
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -139,7 +145,9 @@ class DailyStats(Base):
             "losses": self.losses,
             "win_rate": self.win_rate,
             "signals_generated": self.signals_generated,
+            "signals_rejected": self.signals_rejected,
             "signals_taken": self.signals_taken,
+            "bars_evaluated": self.bars_evaluated,
         }
 
 

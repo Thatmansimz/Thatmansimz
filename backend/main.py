@@ -468,6 +468,192 @@ async def performance_stats(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/funnel")
+async def funnel(db: Session = Depends(get_db)):
+    """
+    THE FUNNEL: bars evaluated → signals found → rejected → trades taken.
+
+    This exists because "no trades" has two completely different causes that
+    used to look identical from the outside: a genuinely quiet market, and an
+    engine silently throwing away every setup it found. One of those cost this
+    project 25 days. The middle number is the whole point.
+    """
+    from backend.services.forward_test import get_campaign
+
+    meta = get_campaign()
+    q = db.query(DailyStats)
+    if meta:
+        q = q.filter(DailyStats.date >= date.fromisoformat(meta["start_date"]))
+    rows = q.order_by(DailyStats.date.asc()).all()
+
+    today_row = next((r for r in rows if r.date == trading_day()), None)
+
+    def totals(subset):
+        return {
+            "bars": sum(r.bars_evaluated or 0 for r in subset),
+            "signals": sum(r.signals_generated or 0 for r in subset),
+            "rejected": sum(r.signals_rejected or 0 for r in subset),
+            "taken": sum(r.signals_taken or 0 for r in subset),
+        }
+
+    camp = totals(rows)
+    today = totals([today_row] if today_row else [])
+    rej = _rejection_summary()
+
+    # Plain-English read of the funnel, so the operator never has to interpret.
+    if camp["signals"] == 0 and camp["bars"] > 0:
+        verdict = "No setups found yet — the strategy is looking and finding nothing."
+    elif camp["signals"] > 0 and camp["taken"] == 0:
+        verdict = ("⚠ Setups ARE firing but NONE became trades — something downstream "
+                   "is blocking every one. Check the rejection reasons.")
+    elif camp["rejected"] > camp["taken"] * 3 and camp["rejected"] > 5:
+        verdict = "⚠ Most setups are being rejected — worth understanding why."
+    elif camp["taken"] > 0:
+        verdict = "Healthy: setups are being found and converted into trades."
+    else:
+        verdict = "Warming up — no completed bars evaluated yet."
+
+    return {
+        "scope": f"campaign since {meta['start_date']}" if meta else "all-time",
+        "campaign": camp,
+        "today": today,
+        "conversion_pct": round(100.0 * camp["taken"] / camp["signals"], 1) if camp["signals"] else 0.0,
+        "rejection_reasons": rej.get("by_reason") or {},
+        "last_rejection": rej.get("last_reason"),
+        "last_rejection_at": rej.get("last_at"),
+        "verdict": verdict,
+        "daily": [
+            {"date": r.date.isoformat(), "bars": r.bars_evaluated or 0,
+             "signals": r.signals_generated or 0, "rejected": r.signals_rejected or 0,
+             "taken": r.signals_taken or 0}
+            for r in rows
+        ],
+    }
+
+
+@app.get("/api/record")
+async def record(db: Session = Depends(get_db)):
+    """
+    THE RECORD: the credible view. No gauges, no live telemetry — just the
+    numbers someone with money would ask for. Equity curve with drawdown,
+    R-multiple distribution, session and direction breakdown, and the backtest
+    baseline to compare against.
+    """
+    import json as _json
+    from backend.services.forward_test import get_campaign
+    from backend.models.trade import EquitySnapshot
+
+    meta = get_campaign()
+    trades, scope = _campaign_trades(db)
+    trades = [t for t in trades if t.exit_time]
+    trades.sort(key=lambda t: t.exit_time)
+
+    start_equity = (meta or {}).get("start_equity", settings.PROP_FIRM_ACCOUNT_SIZE)
+
+    # Equity curve built from the trade log itself (the defensible source —
+    # it reconciles to the trades a reviewer can inspect), plus the underwater
+    # curve, which is the chart that actually decides whether a strategy is
+    # survivable.
+    equity, peak, max_dd, curve = start_equity, start_equity, 0.0, []
+    for i, t in enumerate(trades, 1):
+        equity += (t.net_pnl or 0.0)
+        peak = max(peak, equity)
+        dd = peak - equity
+        max_dd = max(max_dd, dd)
+        curve.append({
+            "n": i,
+            "date": t.exit_time.date().isoformat(),
+            "equity": round(equity, 2),
+            "drawdown": round(-dd, 2),
+            "pnl": round(t.net_pnl or 0.0, 2),
+            "r": t.r_multiple,
+        })
+
+    wins = [t for t in trades if (t.net_pnl or 0) > 0]
+    losses = [t for t in trades if (t.net_pnl or 0) < 0]
+    gw = sum(t.net_pnl for t in wins) if wins else 0.0
+    gl = abs(sum(t.net_pnl for t in losses)) if losses else 0.0
+    n = len(trades)
+
+    # R-multiple histogram — the shape of the edge, not just its average.
+    buckets = [("≤-1R", -99, -1.0), ("-1 to -0.5", -1.0, -0.5), ("-0.5 to 0", -0.5, 0.0),
+               ("0 to +1R", 0.0, 1.0), ("+1 to +2R", 1.0, 2.0), ("≥+2R", 2.0, 99)]
+    r_dist = []
+    for label, lo, hi in buckets:
+        c = sum(1 for t in trades if t.r_multiple is not None and lo <= t.r_multiple < hi)
+        r_dist.append({"bucket": label, "count": c})
+    r_known = [t.r_multiple for t in trades if t.r_multiple is not None]
+
+    def group(key_fn):
+        out = {}
+        for t in trades:
+            k = key_fn(t) or "Unknown"
+            g = out.setdefault(k, {"trades": 0, "wins": 0, "pnl": 0.0})
+            g["trades"] += 1
+            g["wins"] += 1 if (t.net_pnl or 0) > 0 else 0
+            g["pnl"] = round(g["pnl"] + (t.net_pnl or 0.0), 2)
+        for g in out.values():
+            g["win_rate"] = round(100.0 * g["wins"] / g["trades"], 1) if g["trades"] else 0.0
+            g["expectancy"] = round(g["pnl"] / g["trades"], 2) if g["trades"] else 0.0
+        return out
+
+    # Backtest baseline, if one has been generated (scripts/v2_backtest.py
+    # --save-baseline). This is what the campaign is measured against.
+    baseline = None
+    try:
+        with open(os.path.join("data", "baseline.json")) as f:
+            baseline = _json.load(f)
+    except Exception:
+        baseline = None
+
+    days_elapsed = 0
+    if meta:
+        days_elapsed = max(1, (trading_day() - date.fromisoformat(meta["start_date"])).days + 1)
+
+    expected = None
+    if baseline and days_elapsed:
+        per_day = baseline.get("total_pnl", 0) / max(1, baseline.get("days", 30))
+        expected = {
+            "per_day": round(per_day, 2),
+            "to_date": round(per_day * days_elapsed, 2),
+            "trades_per_day": round(baseline.get("total_trades", 0) / max(1, baseline.get("days", 30)), 2),
+            "win_rate": baseline.get("win_rate"),
+            "profit_factor": baseline.get("profit_factor"),
+            "expectancy": round(baseline.get("total_pnl", 0) / max(1, baseline.get("total_trades", 1)), 2),
+        }
+
+    return {
+        "scope": scope,
+        "start_date": (meta or {}).get("start_date"),
+        "days_elapsed": days_elapsed,
+        "target_days": (meta or {}).get("target_days", 60),
+        "start_equity": start_equity,
+        "summary": {
+            "trades": n,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(100.0 * len(wins) / n, 1) if n else 0.0,
+            "net_pnl": round(sum(t.net_pnl or 0 for t in trades), 2),
+            "profit_factor": round(gw / gl, 2) if gl > 0 else (float("inf") if gw > 0 else 0.0),
+            "expectancy": round(sum(t.net_pnl or 0 for t in trades) / n, 2) if n else 0.0,
+            "avg_win": round(gw / len(wins), 2) if wins else 0.0,
+            "avg_loss": round(-gl / len(losses), 2) if losses else 0.0,
+            "payoff": round((gw / len(wins)) / (gl / len(losses)), 2) if wins and losses else 0.0,
+            "max_drawdown": round(max_dd, 2),
+            "max_drawdown_pct": round(100.0 * max_dd / start_equity, 2) if start_equity else 0.0,
+            "avg_r": round(sum(r_known) / len(r_known), 2) if r_known else None,
+            "return_pct": round(100.0 * sum(t.net_pnl or 0 for t in trades) / start_equity, 2) if start_equity else 0.0,
+        },
+        "curve": curve,
+        "r_distribution": r_dist,
+        "by_session": group(lambda t: t.session),
+        "by_direction": group(lambda t: (t.side or "").upper()),
+        "by_symbol": group(lambda t: t.symbol),
+        "baseline": baseline,
+        "expected": expected,
+    }
+
+
 @app.get("/api/stats/insights")
 async def trade_insights(db: Session = Depends(get_db)):
     """

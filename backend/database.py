@@ -31,6 +31,10 @@ def _migrate_sqlite():
             ("r_multiple", "FLOAT"),          # gross P&L / initial risk
             ("session", "VARCHAR(20)"),       # ASIA / LONDON / NEW_YORK at entry
         ],
+        "daily_stats": [
+            ("signals_rejected", "INTEGER DEFAULT 0"),
+            ("bars_evaluated", "INTEGER DEFAULT 0"),
+        ],
     }
     with engine.connect() as conn:
         for table, cols in wanted.items():

@@ -156,6 +156,9 @@ def main():
                     help="commission $/contract/side (default 1.50 → $3.00 round trip)")
     ap.add_argument("--slippage-ticks", type=int, default=1,
                     help="ticks of adverse slippage on entries and stop exits (default 1)")
+    ap.add_argument("--save-baseline", action="store_true",
+                    help="write data/baseline.json so the dashboard can plot "
+                         "this backtest against the live forward-test record")
     args = ap.parse_args()
 
     print("=" * 66)
@@ -199,6 +202,32 @@ def main():
     for sess, pnl in stats["by_session"].items():
         print(f"     {sess:<10} ${pnl:,.2f}")
     print("=" * 66)
+
+    if args.save_baseline:
+        import json, os as _os
+        from datetime import datetime as _dt
+        days = int("".join(c for c in args.period if c.isdigit()) or 30)
+        payload = {
+            "generated_at": _dt.utcnow().isoformat(),
+            "symbol": args.symbol,
+            "period": args.period,
+            "days": days,
+            "total_trades": stats["total_trades"],
+            "win_rate": round(stats["win_rate"], 2),
+            "profit_factor": round(pf, 3) if pf != float("inf") else None,
+            "total_pnl": round(stats["total_pnl"], 2),
+            "avg_win": round(stats["avg_win"], 2),
+            "avg_loss": round(stats["avg_loss"], 2),
+            "by_session": {k: round(v, 2) for k, v in stats["by_session"].items()},
+            "commission_per_side": args.commission,
+            "slippage_ticks": args.slippage_ticks,
+        }
+        _os.makedirs("data", exist_ok=True)
+        with open(_os.path.join("data", "baseline.json"), "w") as f:
+            json.dump(payload, f, indent=2)
+        print(f"  ✅ Baseline saved to data/baseline.json — the dashboard will now")
+        print(f"     plot live results against this backtest.")
+        print("=" * 66)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,22 @@ class ExecutionService:
     def _get_account(self) -> Optional[Account]:
         return self.db.query(Account).first()
 
+    def _reject(self, daily_stats, reason: str, detail: str = ""):
+        """
+        Record a turned-away signal in BOTH the in-memory reason breakdown and
+        the persisted daily counter. Every rejection path must come through
+        here — an uncounted rejection is exactly how a blocked engine passes
+        for a quiet market.
+        """
+        logger.warning("Signal REJECTED: %s%s", reason, f" | {detail}" if detail else "")
+        _note_rejection(reason)
+        if daily_stats:
+            daily_stats.signals_rejected = (daily_stats.signals_rejected or 0) + 1
+            try:
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
+
     async def process_signal(self, signal_data: dict) -> Optional[Trade]:
         account = self._get_account()
         daily_stats = self._get_or_create_daily_stats()
@@ -85,15 +101,13 @@ class ExecutionService:
         can_trade, reason = self.risk_manager.check_can_trade(daily_stats, account)
         if not can_trade:
             logger.info("Signal blocked: %s", reason)
+            self._reject(daily_stats, reason)
             return None
 
         valid, validation_msg = self.risk_manager.validate_signal(signal_data)
         if not valid:
-            # WARNING, not INFO: a rejected signal is the single most common way
-            # this engine goes quiet while looking perfectly healthy.
-            logger.warning("Signal REJECTED by risk gate: %s | %s %s",
-                           validation_msg, signal_data.get("direction"), signal_data.get("symbol"))
-            _note_rejection(validation_msg)
+            self._reject(daily_stats, validation_msg,
+                         f"{signal_data.get('direction')} {signal_data.get('symbol')}")
             return None
 
         # One position per symbol — the broker book is keyed by symbol, so a
@@ -108,8 +122,8 @@ class ExecutionService:
             .first()
         )
         if existing:
-            logger.info("Signal skipped: %s already has an open trade (id=%d)",
-                        signal_data["symbol"], existing.id)
+            self._reject(daily_stats, "already in a position",
+                         f"{signal_data['symbol']} trade id={existing.id}")
             return None
 
         # Pre-trade exposure gate: the daily-loss check above only counts
@@ -132,8 +146,7 @@ class ExecutionService:
             msg = (f"projected exposure ${-projected:,.0f} would breach daily loss "
                    f"limit ${loss_limit:,.0f} (realized ${realized:,.0f}, "
                    f"this trade ${cand_risk:,.0f}, open ${open_risk:,.0f})")
-            logger.warning("Signal REJECTED: %s", msg)
-            _note_rejection("projected daily-loss breach")
+            self._reject(daily_stats, "projected daily-loss breach", msg)
             return None
 
         # Save signal to DB. Optional fields are .get() — the V2 engine does not
@@ -202,7 +215,7 @@ class ExecutionService:
                          signal_data["symbol"], status)
             # Count it like every other refusal, or a broker that rejects every
             # order looks exactly like a market with no setups.
-            _note_rejection(f"broker rejected order ({status})")
+            self._reject(daily_stats, f"broker rejected order ({status})")
             db_signal.status = "cancelled"
             self.db.commit()
             return None
