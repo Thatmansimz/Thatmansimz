@@ -741,56 +741,81 @@ async def trade_insights(db: Session = Depends(get_db)):
 
     wl_ratio = round(overall["wins"] / overall["losses"], 2) if overall["losses"] else float(overall["wins"])
 
-    # ── auto strengths / weaknesses ──
+    # ── observations, NOT advice ──
+    #
+    # This block used to be a selection machine pointed at the operator. It
+    # fired on n>=3 trades and emitted prescriptions — "consider dropping it",
+    # "raising your threshold would help", "strong candidate to turn off" —
+    # from samples where nothing whatsoever is detectable. On 171 trades the
+    # minimum detectable effect is PF 1.26; on 3 trades it is meaningless. An
+    # unledgered comparison presented as a recommendation is exactly how a
+    # trader talks himself into curve-fitting.
+    #
+    # Rules now: (a) every claim carries its sample size, (b) nothing below
+    # MIN_N is reported at all, (c) no imperative verbs — describe, never
+    # prescribe, (d) a standing caveat until the sample can support inference.
+    MIN_N = 30          # per-bucket floor for any comparative observation
+    MIN_N_TOTAL = 200   # below this, no aggregate claim is inferentially valid
+
     strengths, weaknesses = [], []
+    n_all = overall["trades"]
+
+    if n_all < MIN_N_TOTAL:
+        weaknesses.append(
+            f"SAMPLE TOO SMALL for inference: {n_all} closed trades. "
+            f"~{MIN_N_TOTAL} are needed before any figure here distinguishes edge "
+            f"from variance. Everything below is descriptive only."
+        )
 
     if overall["payoff"] >= 1.0:
-        strengths.append(f"Winners pay {overall['payoff']}x your losers (${overall['avg_win']:.0f} vs ${abs(overall['avg_loss']):.0f}) — the risk/reward math works.")
+        strengths.append(f"Winners pay {overall['payoff']}x losers (${overall['avg_win']:.0f} vs ${abs(overall['avg_loss']):.0f}) over {n_all} trades.")
     elif overall["payoff"] > 0:
-        weaknesses.append(f"Losers (${abs(overall['avg_loss']):.0f}) outweigh winners (${overall['avg_win']:.0f}) — payoff only {overall['payoff']}x. Let winners run or cut losers faster.")
+        weaknesses.append(f"Losers (${abs(overall['avg_loss']):.0f}) outweigh winners (${overall['avg_win']:.0f}); payoff {overall['payoff']}x over {n_all} trades.")
 
     L, Sh = by_direction.get("long"), by_direction.get("short")
-    if L and Sh and L["trades"] >= 3 and Sh["trades"] >= 3:
-        if L["win_rate"] - Sh["win_rate"] >= 15:
-            strengths.append(f"Longs win {L['win_rate']}% vs shorts {Sh['win_rate']}% — your edge is on the buy side. Filter shorts harder.")
-        elif Sh["win_rate"] - L["win_rate"] >= 15:
-            strengths.append(f"Shorts win {Sh['win_rate']}% vs longs {L['win_rate']}% — your edge is on the sell side.")
+    if L and Sh and L["trades"] >= MIN_N and Sh["trades"] >= MIN_N:
+        gap = L["win_rate"] - Sh["win_rate"]
+        if abs(gap) >= 15:
+            side = "Longs" if gap > 0 else "Shorts"
+            a, b = (L, Sh) if gap > 0 else (Sh, L)
+            strengths.append(
+                f"{side} won {a['win_rate']}% (n={a['trades']}) vs {b['win_rate']}% (n={b['trades']}). "
+                f"Directional split — not yet a validated difference."
+            )
 
-    rich_syms = {k: v for k, v in by_symbol.items() if v["trades"] >= 3}
+    rich_syms = {k: v for k, v in by_symbol.items() if v["trades"] >= MIN_N}
     if len(rich_syms) >= 2:
         best = max(rich_syms, key=lambda k: rich_syms[k]["expectancy"])
         worst = min(rich_syms, key=lambda k: rich_syms[k]["expectancy"])
-        if rich_syms[best]["expectancy"] > 0:
-            strengths.append(f"{best} is your best instrument: +${rich_syms[best]['expectancy']:.0f}/trade over {rich_syms[best]['trades']} trades.")
+        strengths.append(f"{best}: {rich_syms[best]['expectancy']:+.0f}/trade over {rich_syms[best]['trades']} trades (highest of {len(rich_syms)} instruments).")
         if rich_syms[worst]["expectancy"] < 0:
-            weaknesses.append(f"{worst} is bleeding ${abs(rich_syms[worst]['expectancy']):.0f}/trade over {rich_syms[worst]['trades']} trades — consider dropping it.")
+            weaknesses.append(f"{worst}: ${rich_syms[worst]['expectancy']:.0f}/trade over {rich_syms[worst]['trades']} trades (lowest of {len(rich_syms)}).")
 
-    for name, st in by_session.items():
-        if st["trades"] >= 4 and st["pnl"] < 0:
-            weaknesses.append(f"{name} session is net negative (${st['pnl']:.0f} over {st['trades']} trades) — strong candidate to turn off.")
-        elif st["trades"] >= 4 and st["win_rate"] >= 58 and st["pnl"] > 0:
-            strengths.append(f"{name} is your power window: {st['win_rate']}% win rate, +${st['pnl']:.0f}.")
-
-    hi, lo = by_confidence.get(">75%"), by_confidence.get("<65%")
-    if hi and lo and hi["trades"] >= 3 and lo["trades"] >= 3:
-        if hi["win_rate"] > lo["win_rate"] + 10:
-            strengths.append(f"High-confidence signals (>75%) win {hi['win_rate']}% vs {lo['win_rate']}% for low — the AI score is predictive. Raising your threshold would help.")
-        elif lo["win_rate"] >= hi["win_rate"]:
-            weaknesses.append("Low-confidence trades win as often as high-confidence ones — the confidence score needs recalibration.")
+    sess_n = {k: v for k, v in by_session.items() if v["trades"] >= MIN_N}
+    for name, st in sess_n.items():
+        sign = "net negative" if st["pnl"] < 0 else "net positive"
+        weaknesses.append(f"{name}: {sign} ${st['pnl']:.0f} over {st['trades']} trades.") if st["pnl"] < 0 \
+            else strengths.append(f"{name}: +${st['pnl']:.0f} over {st['trades']} trades, {st['win_rate']}% win rate.")
+    if len(sess_n) >= 2:
+        weaknesses.append(
+            f"Comparing {len(sess_n)} sessions on one sample favours the winner by "
+            f"selection alone — the best of 3 zero-edge sessions still shows a median "
+            f"profit factor near 1.25. Session ranking here is not evidence."
+        )
 
     so = by_exit.get("stopped_out")
-    if so and overall["trades"] and so["trades"] / overall["trades"] >= 0.5:
-        weaknesses.append(f"{so['trades']} of {overall['trades']} trades hit the stop — stops may be too tight or entries too early.")
+    if so and n_all >= MIN_N and so["trades"] / n_all >= 0.5:
+        weaknesses.append(f"{so['trades']} of {n_all} trades exited at a stop ({100*so['trades']/n_all:.0f}%).")
 
     if overall["expectancy"] > 0:
-        strengths.append(f"Positive expectancy: +${overall['expectancy']:.0f} per trade. This is the number that scales when you add size.")
+        strengths.append(f"Expectancy +${overall['expectancy']:.0f}/trade over {n_all} trades.")
     else:
-        weaknesses.append(f"Negative expectancy: -${abs(overall['expectancy']):.0f} per trade. Do NOT add size until this flips positive.")
+        weaknesses.append(f"Expectancy -${abs(overall['expectancy']):.0f}/trade over {n_all} trades.")
 
     if not strengths:
-        strengths.append("No clear edge has emerged yet — let the sample grow before drawing conclusions.")
+        strengths.append(f"Nothing meets the {MIN_N}-trade reporting floor yet.")
     if not weaknesses:
-        weaknesses.append("No glaring leaks in this sample — keep monitoring as trades accumulate.")
+        weaknesses.append(f"Nothing meets the {MIN_N}-trade reporting floor yet.")
 
     return {
         "total_trades": overall["trades"],
