@@ -112,6 +112,30 @@ class ExecutionService:
                         signal_data["symbol"], existing.id)
             return None
 
+        # Pre-trade exposure gate: the daily-loss check above only counts
+        # REALIZED P&L, so at -$1,999 of a $2,000 limit it would still admit a
+        # trade risking $500-1,100 — a limit that can only detect a breach
+        # after it happens is not a limit. Refuse when this trade's risk plus
+        # everything already at risk could carry the day past the line.
+        cand_risk = float(signal_data.get("est_risk_dollars") or 0.0)
+        if not cand_risk:
+            cand_risk = abs(signal_data["entry_price"] - signal_data["stop_loss"]) \
+                * _point_value(signal_data["symbol"]) * signal_data.get("contracts", 1)
+        open_risk = 0.0
+        for t in self.db.query(Trade).filter(Trade.status == "open").all():
+            stop_ref = t.initial_stop_loss or t.stop_loss or t.entry_price
+            open_risk += abs((t.entry_price or 0) - (stop_ref or 0)) * _point_value(t.symbol) * t.qty
+        realized = min(daily_stats.pnl or 0.0, self.risk_manager._daily_realized_pnl)
+        loss_limit = self.risk_manager.config.get_prop_firm_rules()["daily_loss_limit"]
+        projected = realized - cand_risk - open_risk
+        if projected <= -loss_limit:
+            msg = (f"projected exposure ${-projected:,.0f} would breach daily loss "
+                   f"limit ${loss_limit:,.0f} (realized ${realized:,.0f}, "
+                   f"this trade ${cand_risk:,.0f}, open ${open_risk:,.0f})")
+            logger.warning("Signal REJECTED: %s", msg)
+            _note_rejection("projected daily-loss breach")
+            return None
+
         # Save signal to DB. Optional fields are .get() — the V2 engine does not
         # emit entry zones or risk_amount, and hard-subscripting them raised a
         # KeyError that silently killed every single V2 signal.
@@ -192,6 +216,10 @@ class ExecutionService:
             qty=qty,
             entry_price=fill_price,
             stop_loss=signal_data["stop_loss"],
+            # Immutable copy — trailing rewrites stop_loss, and without this
+            # the record can never reconstruct the risk that was actually taken.
+            initial_stop_loss=signal_data["stop_loss"],
+            session=signal_data.get("session"),
             take_profit=tp,
             take_profit_2=signal_data.get("target_2"),
             status="open",
@@ -249,11 +277,20 @@ class ExecutionService:
 
         current_price = position.get("current_price", trade.entry_price)
 
-        # Update trailing stop
-        new_stop = self.risk_manager.calculate_trailing_stop(
-            trade.symbol, trade.side, trade.entry_price, current_price, trade.stop_loss
-        )
-        if new_stop != trade.stop_loss:
+        # Update the trailing stop using the SAME rule the backtest ran.
+        # The old path used calculate_trailing_stop (breakeven at 0.5R, no
+        # trail, and it measured R against its own mutated output so it froze
+        # after one move) — a different exit system from the validated one,
+        # which manufactured breakeven scratches the backtest never took.
+        new_stop = self._trailing_stop_v2(trade, current_price) \
+            if trade.strategy == "multi_session" else \
+            self.risk_manager.calculate_trailing_stop(
+                trade.symbol, trade.side, trade.entry_price, current_price,
+                trade.initial_stop_loss or trade.stop_loss,
+            )
+        # Trailing may only tighten, never widen.
+        improved = (new_stop > trade.stop_loss) if trade.side == "long" else (new_stop < trade.stop_loss)
+        if improved:
             trade.stop_loss = new_stop
             try:
                 await self.broker.update_stop(trade.broker_order_id, new_stop)
@@ -276,6 +313,45 @@ class ExecutionService:
 
         self.db.commit()
 
+    def _trailing_stop_v2(self, trade: Trade, current_price: float) -> float:
+        """
+        Reproduce scripts/v2_backtest.py's exit management exactly (lines
+        78-90 of simulate()): move to breakeven once price has run +1R from
+        entry — R measured against the IMMUTABLE initial stop — then ratchet
+        behind min(EMA-12, price - 0.25R) on every cycle. This is the rule the
+        +$5,127 baseline was produced under; the strategy itself advertises it
+        ('method': 'ema12_pivot', 'breakeven_at_r': 1.0).
+        """
+        init_stop = trade.initial_stop_loss or trade.stop_loss
+        r = abs(trade.entry_price - init_stop)
+        stop = trade.stop_loss
+        if r <= 0:
+            return stop
+
+        # EMA-12 of completed 5m closes, same series the backtest uses.
+        ema = None
+        try:
+            from backend.services.market_data import MarketDataService
+            md = MarketDataService()
+            df = md.get_historical(trade.symbol, period="5d", interval="5m")
+            df = md.drop_forming_bar(df)
+            if df is not None and not df.empty:
+                ema = float(df["close"].ewm(span=12, adjust=False).mean().iloc[-1])
+        except Exception:
+            ema = None
+
+        if trade.side == "long":
+            if current_price >= trade.entry_price + r and stop < trade.entry_price:
+                stop = trade.entry_price
+            if ema is not None:
+                stop = max(stop, min(ema, current_price - r * 0.25))
+        else:
+            if current_price <= trade.entry_price - r and stop > trade.entry_price:
+                stop = trade.entry_price
+            if ema is not None:
+                stop = min(stop, max(ema, current_price + r * 0.25))
+        return round(stop, 2)
+
     async def _reconcile_closed_trade(self, trade: Trade):
         try:
             fill = await self.broker.get_last_fill(trade.broker_order_id)
@@ -294,7 +370,14 @@ class ExecutionService:
                 trade.id, trade.symbol, trade.broker_order_id,
             )
             return
-        await self._finalize_trade(trade, float(fill["price"]), "broker_closed")
+        # Carry the actual exit CAUSE into the record. The broker knows whether
+        # the stop or the target was crossed; collapsing everything to
+        # "broker_closed" made a target-hit and a stop-out — the two most
+        # different events in the record — indistinguishable in the DB.
+        cause = {"target": "target", "stop": "stop_loss", "manual": "manual"}.get(
+            fill.get("cause"), "broker_closed"
+        )
+        await self._finalize_trade(trade, float(fill["price"]), cause)
 
     async def close_position(self, trade_id: int, reason: str = "manual") -> bool:
         trade = self.db.query(Trade).filter(Trade.id == trade_id).first()
@@ -357,12 +440,27 @@ class ExecutionService:
         trade.commission = commission
         trade.exit_reason = reason
 
-        if net_pnl > 0:
-            trade.status = "target_hit" if reason != "stop_loss" else "stopped_out"
-        elif net_pnl < 0:
-            trade.status = "stopped_out"
+        # R multiple against the IMMUTABLE initial stop — the working stop is
+        # trailed, so measuring against it makes every trade's risk read $0.
+        init_stop = trade.initial_stop_loss or trade.stop_loss
+        init_risk = abs((trade.entry_price or 0) - (init_stop or 0)) * pv * trade.qty
+        trade.r_multiple = round(gross_pnl / init_risk, 2) if init_risk > 0 else None
+
+        # Status comes from the exit CAUSE, not from the sign of the P&L.
+        # Sign-derived status wrote "target_hit" on manual closes that were
+        # 90 points from the target, and "stopped_out" on trailed-breakeven
+        # scratches that never touched the structural stop.
+        if reason == "target":
+            trade.status = "target_hit"
+        elif reason == "stop_loss":
+            trailed_to_be = (
+                trade.initial_stop_loss is not None
+                and abs((trade.stop_loss or 0) - (trade.entry_price or 0))
+                    < abs((trade.initial_stop_loss or 0) - (trade.entry_price or 0)) * 0.5
+            )
+            trade.status = "breakeven_stop" if trailed_to_be else "stopped_out"
         else:
-            trade.status = "closed"
+            trade.status = "closed"   # manual / end_of_day / emergency / legacy
 
         # Book the outcome on the SAME day row the trade was counted on. Using
         # "today" here split every overnight Asia trade across two rows — the
@@ -375,8 +473,12 @@ class ExecutionService:
         daily_stats.commissions = (daily_stats.commissions or 0) + commission
         if net_pnl > 0:
             daily_stats.wins += 1
-        else:
+        elif net_pnl < 0:
             daily_stats.losses += 1
+        else:
+            # A true scratch is neither — booking it as a loss made the trades
+            # table and the daily table disagree about the same event.
+            daily_stats.breakeven = (daily_stats.breakeven or 0) + 1
 
         # Move the account — without this, balance/equity flatline forever and
         # the forward-test equity curve records nothing.
@@ -390,7 +492,14 @@ class ExecutionService:
             account.update_peak()
             drawdown = account.calculate_drawdown_from_peak()
             account.max_drawdown_reached = max(account.max_drawdown_reached or 0.0, drawdown)
-        daily_stats.current_balance = account.balance if account else daily_stats.current_balance
+        if account:
+            daily_stats.current_balance = account.balance
+            daily_stats.ending_balance = account.balance
+            hwm = max(daily_stats.high_water_mark or daily_stats.starting_balance or 0.0,
+                      account.balance)
+            daily_stats.high_water_mark = hwm
+            daily_stats.max_drawdown = max(daily_stats.max_drawdown or 0.0,
+                                           hwm - account.balance)
 
         # Commit the DB FIRST, then move the broker's persisted balance. If the
         # broker went first and the commit failed, the trade would still be

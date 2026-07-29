@@ -191,13 +191,18 @@ class MarketDataService:
     can never again be silent.
     """
 
+    # CLASS-level cache, shared by every instance. The scheduler and the paper
+    # broker each construct their own MarketDataService; with per-instance
+    # caches they could see two different prices for the same symbol at the
+    # same instant — the scan deciding entries on one snapshot while exit
+    # monitoring judged stops on another.
+    _cache: dict[str, pd.DataFrame] = {}
+    _cache_time: dict[str, datetime] = {}
+
     def __init__(self):
-        self._cache: dict[str, pd.DataFrame] = {}
-        self._cache_time: dict[str, datetime] = {}
-        # 4 minutes: the engine scans every 60s but a 5m bar only completes
-        # every 5 minutes — refetching the same 10d of bars twice a minute
-        # was pure rate-limit bait (2,880 downloads/day for ~288 new bars).
-        self._cache_ttl_seconds = 240
+        # 90s: fresh enough that a newly completed 5m bar is seen within
+        # ~1-2 scan cycles, without refetching 10d of bars every single scan.
+        self._cache_ttl_seconds = 90
         # On failure, serve stale cache for up to this long so one bad fetch
         # doesn't blind position monitoring.
         self._stale_ok_seconds = 3600
@@ -467,6 +472,48 @@ class MarketDataService:
 
         df.dropna(inplace=True)
         return df
+
+    @staticmethod
+    def drop_forming_bar(df: pd.DataFrame, interval_seconds: int = 300) -> pd.DataFrame:
+        """
+        Remove the still-forming last bar so callers only ever see COMPLETED
+        bars — exactly what the backtest iterates over.
+
+        yfinance includes the in-progress bar during market hours. Evaluating
+        it live meant the strategy saw a candle whose low/close were still
+        moving: stops measured from a running low (inflating size), entries on
+        engulfings that un-engulfed by the close, and trade populations the
+        backtest structurally cannot produce.
+        """
+        if df is None or df.empty:
+            return df
+        try:
+            last_ts = df.index[-1]
+            ts = last_ts.tz_convert("UTC").to_pydatetime().replace(tzinfo=None) \
+                if last_ts.tzinfo is not None else last_ts.to_pydatetime()
+            if (datetime.utcnow() - ts).total_seconds() < interval_seconds:
+                return df.iloc[:-1]
+        except Exception:
+            pass
+        return df
+
+    def get_last_bar(self, symbol: str) -> Optional[dict]:
+        """
+        The last COMPLETED bar's OHLC + timestamp. Exit detection must use
+        this (intrabar high/low, stop-first) — a single spot sample cannot see
+        a wick that hit the stop and came back, which suppressed stop-outs the
+        backtest books at -1R.
+        """
+        df = self.get_historical(symbol, period="5d", interval="5m")
+        df = self.drop_forming_bar(df)
+        if df is None or df.empty:
+            return None
+        row = df.iloc[-1]
+        return {
+            "ts": str(df.index[-1]),
+            "open": float(row["open"]), "high": float(row["high"]),
+            "low": float(row["low"]), "close": float(row["close"]),
+        }
 
     def get_last_close(self, symbol: str) -> Optional[float]:
         """

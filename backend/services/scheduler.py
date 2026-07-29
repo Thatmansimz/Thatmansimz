@@ -42,6 +42,9 @@ class TradingScheduler:
         self._running = False
         self._task: asyncio.Task = None
         self._cycle_interval_seconds = 60
+        # Last completed-bar timestamp evaluated per symbol (backtest parity:
+        # one evaluation per completed bar, never the forming bar).
+        self._last_eval_bar: dict[str, str] = {}
 
         # Select the active strategy. "ml" uses the AI engine directly;
         # rule-based strategies operate on a freshly fetched DataFrame.
@@ -211,6 +214,19 @@ class TradingScheduler:
                     _scheduler_state["last_no_signal"] = f"{symbol} — NO DATA (feed down)"
                     logger.warning("Scan skipped for %s: no market data", symbol)
                     return
+                # COMPLETED bars only, each evaluated exactly once — this is
+                # what the backtest does (it iterates finished bars). Evaluating
+                # the still-forming bar meant stops measured from a running low
+                # (inflating size up to 4x), entries on engulfings that
+                # un-engulfed by the close, and the same bar re-firing every
+                # 60s cycle.
+                df = self.market_data.drop_forming_bar(df)
+                if df is None or df.empty:
+                    return
+                last_bar_ts = str(df.index[-1])
+                if self._last_eval_bar.get(symbol) == last_bar_ts:
+                    return  # this completed bar was already evaluated
+                self._last_eval_bar[symbol] = last_bar_ts
                 df = self.market_data.add_indicators(df)
                 signal_data = self.strategy.generate_signal(df, symbol)
             else:

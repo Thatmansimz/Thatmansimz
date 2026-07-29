@@ -197,8 +197,12 @@ class MultiSessionStrategy(BaseStrategy):
             return self._state(ts, symbol, "watching", session=session, overlap=overlap,
                                reason="Invalid structural stop")
 
-        # Asia gets a tunable R:R (default 1.5) — better than the original 1.0
-        # cap while still respecting Asia's tighter range vs London/NY's 2.0.
+        # One R:R multiple for BOTH the target and the sizing. These previously
+        # disagreed for Asia (target used asia_max_rr=2.0, sizing used
+        # session.max_rr=1.0), which made every Asia position exactly 2x
+        # oversized relative to the $500-1500 profit window — the strategy's
+        # own in_monetary_window flag read False on essentially every Asia
+        # setup, and nothing ever looked at it.
         rr = self.asia_max_rr if session.name == "ASIA" else session.max_rr
         if bias == "long":
             t1 = entry + stop_dist          # 1:1
@@ -207,7 +211,7 @@ class MultiSessionStrategy(BaseStrategy):
             t1 = entry - stop_dist
             t2 = entry - stop_dist * rr
 
-        contracts = self._size_contracts(stop_dist, point_value, session, atr_pts, symbol)
+        contracts = self._size_contracts(stop_dist, point_value, session, atr_pts, symbol, rr)
         est_risk = stop_dist * point_value * contracts
         est_target = abs(t2 - entry) * point_value * contracts
 
@@ -249,12 +253,18 @@ class MultiSessionStrategy(BaseStrategy):
     # ──────────────────────────────────────────────────────────────────────
     # Section 5 helpers
     # ──────────────────────────────────────────────────────────────────────
-    def _size_contracts(self, stop_dist, point_value, session, atr_pts, symbol) -> int:
+    def _size_contracts(self, stop_dist, point_value, session, atr_pts, symbol,
+                        rr: float | None = None) -> int:
         """
-        Size to land the 2R target inside the $500–$1500 window, then apply ATR
-        scaling: scale DOWN in volatile NY, lean on MNQ micros in Asia.
+        Size to land the ACTUAL target (rr × stop) inside the $500–$1500
+        window, then apply ATR scaling: scale DOWN in volatile NY, lean on MNQ
+        micros in Asia. rr must be the same multiple used to place t2 —
+        sizing against a different multiple than the target silently scales
+        risk by their ratio.
         """
-        per_contract_target = stop_dist * session.max_rr * point_value
+        if rr is None:
+            rr = session.max_rr
+        per_contract_target = stop_dist * rr * point_value
         if per_contract_target <= 0:
             return 1
         midpoint = (TARGET_PROFIT_MIN + TARGET_PROFIT_MAX) / 2.0

@@ -18,9 +18,16 @@ class Trade(Base):
     # Prices
     entry_price = Column(Float, nullable=True)
     exit_price = Column(Float, nullable=True)
+    # stop_loss is the CURRENT working stop (trailing mutates it).
+    # initial_stop_loss is the structural stop at entry and is NEVER rewritten —
+    # without it, a trailed-to-breakeven trade records risk = $0 and the R
+    # multiple of every trade is unreconstructable from the trades table.
     stop_loss = Column(Float, nullable=True)
+    initial_stop_loss = Column(Float, nullable=True)
     take_profit = Column(Float, nullable=True)
     take_profit_2 = Column(Float, nullable=True)
+    r_multiple = Column(Float, nullable=True)     # gross P&L / initial risk
+    session = Column(String(20), nullable=True)   # ASIA / LONDON / NEW_YORK at entry
 
     # Status
     status = Column(String(20), nullable=False, default="pending")
@@ -58,6 +65,9 @@ class Trade(Base):
             "entry_price": self.entry_price,
             "exit_price": self.exit_price,
             "stop_loss": self.stop_loss,
+            "initial_stop_loss": self.initial_stop_loss,
+            "r_multiple": self.r_multiple,
+            "session": self.session,
             "take_profit": self.take_profit,
             "status": self.status,
             "pnl": self.pnl,

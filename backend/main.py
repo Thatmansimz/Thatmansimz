@@ -142,6 +142,21 @@ async def lifespan(app: FastAPI):
     os.makedirs("data", exist_ok=True)
     init_db()
 
+    # One-time backfill: trades recorded before initial_stop_loss existed had
+    # their stop trailed in place, leaving no record of the risk actually
+    # taken. The original stop survives on the linked signal row — restore it.
+    db = SessionLocal()
+    try:
+        for t in db.query(Trade).filter(Trade.initial_stop_loss.is_(None)).all():
+            sig = db.query(Signal).filter(Signal.id == t.signal_id).first() if t.signal_id else None
+            if sig and sig.stop_loss:
+                t.initial_stop_loss = sig.stop_loss
+        db.commit()
+    except Exception as exc:
+        logger.warning("initial_stop_loss backfill skipped: %s", exc)
+    finally:
+        db.close()
+
     # Seed account record
     db = SessionLocal()
     try:
@@ -211,7 +226,7 @@ app.add_middleware(
 )
 
 
-CLOSED_STATUSES = ["closed", "stopped_out", "target_hit"]
+CLOSED_STATUSES = ["closed", "stopped_out", "target_hit", "breakeven_stop"]
 
 
 def _campaign_trades(db: Session):

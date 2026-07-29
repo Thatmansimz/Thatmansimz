@@ -134,50 +134,50 @@ class PaperBroker(BaseBroker):
         if not pos:
             return None
 
-        # Pull the REAL last traded close — never get_latest_price(), which adds
-        # a simulated ±0.05% jitter (±10 index points on MNQ, wider than a
-        # typical structural stop). That jitter was deciding stop-outs by RNG.
-        # Fall back to the last known price if the feed is briefly unavailable.
+        # Exit detection runs on the last COMPLETED bar's high/low, stop-first —
+        # the exact rule the backtest uses (v2_backtest.py). A single spot
+        # sample cannot see a wick that touched the stop and came back, which
+        # systematically suppressed stop-outs the backtest books at -1R (a stop
+        # sits closer than a 2R target, so close-only sampling forgave losers
+        # ~2x more often than it forgave winners). Each bar is judged exactly
+        # once, tracked via last_bar_ts.
         try:
-            price = self.market_data.get_last_close(symbol)
+            bar = self.market_data.get_last_bar(symbol)
         except Exception:
-            price = None
-        if not price or price <= 0:
-            price = pos["current_price"]
-        current = round(float(price), 2)
-        pos["current_price"] = current
+            bar = None
 
-        target = pos["target_price"]
-        stop = pos["stop_price"]
         slip_ticks = int(getattr(self.config, "SLIPPAGE_TICKS", 1))
-
-        # Check if the live price has crossed the bracket's stop or target.
-        # Stops fill through the level (market order); targets fill at price
-        # (resting limit). The exit fill is recorded so the execution layer
-        # reconciles a truthful P&L (get_last_fill returns this exit price).
         hit = None
-        if pos["side"] == "long":
-            if current <= stop:
-                hit = slip_stop_exit(symbol, "long", stop, slip_ticks)
-            elif current >= target:
-                hit = target
-        else:
-            if current >= stop:
-                hit = slip_stop_exit(symbol, "short", stop, slip_ticks)
-            elif current <= target:
-                hit = target
+        cause = None
+
+        if bar and bar["ts"] != pos.get("last_bar_ts"):
+            pos["last_bar_ts"] = bar["ts"]
+            pos["current_price"] = round(bar["close"], 2)
+            target = pos["target_price"]
+            stop = pos["stop_price"]
+            hi, lo = bar["high"], bar["low"]
+            if pos["side"] == "long":
+                if lo <= stop:
+                    hit, cause = slip_stop_exit(symbol, "long", stop, slip_ticks), "stop"
+                elif hi >= target:
+                    hit, cause = target, "target"
+            else:
+                if hi >= stop:
+                    hit, cause = slip_stop_exit(symbol, "short", stop, slip_ticks), "stop"
+                elif lo <= target:
+                    hit, cause = target, "target"
 
         if hit is not None:
             self._orders[pos["order_id"]] = {
                 "order_id": pos["order_id"], "price": round(float(hit), 2),
-                "status": "filled", "exit": True,
+                "status": "filled", "exit": True, "cause": cause,
             }
             del self._positions[symbol]
             self._save()
             return None
 
         self._save()
-        return {**pos, "current_price": current}
+        return {**pos, "current_price": pos["current_price"]}
 
     async def close_position(self, symbol: str) -> dict:
         pos = self._positions.pop(symbol, None)
@@ -197,11 +197,11 @@ class PaperBroker(BaseBroker):
         # guard silently discards every future signal for the rest of the run.
         self._orders[pos["order_id"]] = {
             "order_id": pos["order_id"], "price": fill_price,
-            "status": "filled", "exit": True,
+            "status": "filled", "exit": True, "cause": "manual",
         }
         self._save()
         logger.info("[PAPER] Closed %s @ %.2f", symbol, fill_price)
-        return {"price": fill_price, "status": "filled"}
+        return {"price": fill_price, "status": "filled", "cause": "manual"}
 
     async def get_account(self) -> dict:
         from backend.services.risk_manager import POINT_VALUES

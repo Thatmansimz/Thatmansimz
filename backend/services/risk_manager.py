@@ -200,9 +200,15 @@ class RiskManager:
             daily_pnl = daily_stats.pnl or 0.0
             prop_rules = self.config.get_prop_firm_rules()
 
-            # Stop if daily profit target hit
-            if daily_pnl >= self.config.DAILY_PROFIT_TARGET_DOLLARS:
-                return False, f"Daily profit target ${self.config.DAILY_PROFIT_TARGET_DOLLARS:,.0f} reached"
+            # Stop when the daily profit target is hit — V1 ORB only. The V2
+            # backtest (+$5,127 baseline) has NO profit cap, and V2 sizes every
+            # setup so a single 2R winner lands near $1,000 — a $1,000 cap
+            # would therefore end the day after essentially every first winner,
+            # censoring exactly the right tail the strategy is built to catch,
+            # while losers run to the $2,000 loss limit uncapped.
+            if getattr(self.config, "STRATEGY", "").lower() != "multi_session":
+                if daily_pnl >= self.config.DAILY_PROFIT_TARGET_DOLLARS:
+                    return False, f"Daily profit target ${self.config.DAILY_PROFIT_TARGET_DOLLARS:,.0f} reached"
 
             # Stop if daily loss limit breached.
             # DailyStats.pnl books to the trade's ENTRY day, so an Asia trade
@@ -264,9 +270,18 @@ class RiskManager:
         entry: float,
         current_price: float,
         original_stop: float,
-        trail_after_pct: float = 0.5,
+        trail_after_pct: float = 1.0,
     ) -> float:
-        """Move stop to breakeven once trade is 50% of the way to target."""
+        """
+        Move the stop to breakeven once the trade is trail_after_pct × R in
+        profit, where R is the ORIGINAL stop distance (callers must pass the
+        immutable initial stop, not the current working stop, or R collapses
+        to zero after the first move and the rule degenerates).
+
+        Default 1.0R matches what scripts/backtest.py validated for V1 ORB.
+        The old 0.5R default was a rule nobody ever backtested — it scratched
+        trades at half the profit threshold the validation assumed.
+        """
         point_value = POINT_VALUES.get(symbol.upper(), 5.0)
         if side == "long":
             gain = current_price - entry
