@@ -212,10 +212,14 @@ class ExecutionService:
         self.risk_manager.increment_active_trades()
         self.db.commit()
 
+        # Log the FILL price, not the signal price — the log is part of the
+        # audit trail and must agree with the trades table. (They differ by the
+        # slippage tick, which is exactly the sort of gap that makes a record
+        # look doctored when someone reconciles it later.)
         logger.info(
-            "Trade opened: %s %s x%d @ %.2f | SL: %.2f | TP: %.2f | Conf: %.0f%%",
+            "Trade opened: %s %s x%d @ %.2f (signal %.2f) | SL: %.2f | TP: %.2f | Conf: %.0f%%",
             side.upper(), signal_data["symbol"], qty,
-            signal_data["entry_price"], signal_data["stop_loss"],
+            fill_price, signal_data["entry_price"], signal_data["stop_loss"],
             tp, signal_data["confidence"] * 100,
         )
         return trade
