@@ -20,10 +20,29 @@ from backend.services.risk_manager import RiskManager
 from backend.services.execution import ExecutionService, rejection_summary as _rejection_summary, trading_day
 from backend.services.scheduler import TradingScheduler, get_scheduler_state
 from backend.brokers import get_broker
+from backend.clock import ET, et_iso, utc_now
 
+class _ETFormatter(logging.Formatter):
+    """
+    Stamp log lines on the EXCHANGE clock.
+
+    Logging defaults to the host's local time. On this Phoenix machine that put
+    log lines 3 hours behind the ET dates the record is keyed to and 7 hours
+    behind the UTC timestamps stored on each trade — so a trade and the log line
+    describing it appeared to be different events. The %Z suffix is mandatory:
+    an unlabelled timestamp is how three clocks hid in one system.
+    """
+    def formatTime(self, record, datefmt=None):
+        stamped = datetime.fromtimestamp(record.created, tz=ET)
+        return stamped.strftime(datefmt or "%Y-%m-%d %H:%M:%S %Z")
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_ETFormatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL, logging.INFO),
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    handlers=[_handler],
+    force=True,
 )
 logger = logging.getLogger(__name__)
 
@@ -506,7 +525,24 @@ async def funnel(db: Session = Depends(get_db)):
     # middle. Say so rather than drawing a confident conclusion from half a
     # funnel — a wrong "healthy" is exactly the kind of reassurance that hid
     # the 25-day outage.
-    if camp["bars"] < camp["signals"]:
+    # STALENESS FIRST. Every branch below reads whole-campaign aggregates, so a
+    # campaign that traded once a week ago and has been silent since still
+    # satisfied `camp["taken"] > 0` and reported "Healthy" — which is precisely
+    # the reassuring-but-wrong verdict this panel exists to prevent. Six silent
+    # days in the live campaign read as healthy for all six of them.
+    last_active = None
+    for r in rows:
+        if (r.bars_evaluated or 0) or (r.signals_generated or 0) or (r.signals_taken or 0):
+            last_active = r.date
+    days_since_activity = (trading_day() - last_active).days if last_active else None
+
+    if last_active is None and not rows:
+        verdict = "Warming up — no completed bars evaluated yet."
+    elif days_since_activity is not None and days_since_activity >= 3:
+        verdict = (f"⚠ STALE — no bars, signals or trades for {days_since_activity} days "
+                   f"(last activity {last_active.isoformat()}). The numbers below are "
+                   "history, not current health. Check the data feed and the session gate.")
+    elif camp["bars"] < camp["signals"]:
         verdict = ("⏳ Warming up — bar/rejection counters started at the last deploy. "
                    "The funnel reads correctly from the next full trading day.")
     elif camp["signals"] == 0 and camp["bars"] > 0:
@@ -529,6 +565,8 @@ async def funnel(db: Session = Depends(get_db)):
         "rejection_reasons": rej.get("by_reason") or {},
         "last_rejection": rej.get("last_reason"),
         "last_rejection_at": rej.get("last_at"),
+        "last_activity_date": last_active.isoformat() if last_active else None,
+        "days_since_activity": days_since_activity,
         "verdict": verdict,
         "daily": [
             {"date": r.date.isoformat(), "bars": r.bars_evaluated or 0,
@@ -614,26 +652,87 @@ async def record(db: Session = Depends(get_db)):
     except Exception:
         baseline = None
 
+    # day_index is 1-based (day 1 on the start date). days_elapsed is how many
+    # days have actually PASSED. They differ by exactly one, and the field used
+    # to be named days_elapsed while holding day_index — so on the start date it
+    # claimed one day had elapsed before any had, and every downstream
+    # multiplication inherited the inflation.
+    day_index = 0
     days_elapsed = 0
     if meta:
-        days_elapsed = max(1, (trading_day() - date.fromisoformat(meta["start_date"])).days + 1)
+        _delta = (trading_day() - date.fromisoformat(meta["start_date"])).days
+        day_index = max(1, _delta + 1)
+        days_elapsed = max(0, _delta)
 
     expected = None
-    if baseline and days_elapsed:
-        per_day = baseline.get("total_pnl", 0) / max(1, baseline.get("days", 30))
+    if baseline and day_index:
+        b_days = max(1, baseline.get("days", 30))
+        per_day = baseline.get("total_pnl", 0) / b_days
+        b_pf = baseline.get("profit_factor")
+        b_sessions = baseline.get("sessions")
+        b_target_rr = baseline.get("target_rr")
+
+        # A benchmark is only a benchmark if it describes the system that is
+        # actually running, and if beating it means something. Neither was
+        # checked, so the dashboard silently compared live results against a
+        # LOSING backtest (PF 0.96, -$932) generated under a DIFFERENT session
+        # set — which made any positive number read as "beating expectations".
+        warnings = []
+        comparable = True
+
+        if b_pf is not None and b_pf < 1.0:
+            warnings.append(
+                f"Baseline is UNPROFITABLE (profit factor {b_pf}, "
+                f"{baseline.get('total_pnl')} over {b_days}d). Beating it is not "
+                "evidence of an edge — the bar itself is below break-even."
+            )
+            comparable = False
+
+        live_sessions = sorted(getattr(settings, "V2_SESSIONS", None) or [])
+        if b_sessions is None:
+            warnings.append(
+                "Baseline records no session set, so it cannot be verified "
+                "against the live configuration. Regenerate it with "
+                "scripts/v2_backtest.py --save-baseline to make this checkable."
+            )
+            comparable = False
+        elif sorted(b_sessions) != live_sessions:
+            warnings.append(
+                f"Baseline tested sessions {sorted(b_sessions)} but the engine "
+                f"is running {live_sessions}. Per-day P&L and trade frequency "
+                "are not comparable across different session sets."
+            )
+            comparable = False
+
+        live_rr = getattr(settings, "V2_TARGET_RR", 0) or None
+        if b_target_rr is not None and live_rr and float(b_target_rr) != float(live_rr):
+            warnings.append(
+                f"Baseline used target {b_target_rr}R, the engine is running "
+                f"{live_rr}R."
+            )
+            comparable = False
+
         expected = {
             "per_day": round(per_day, 2),
-            "to_date": round(per_day * days_elapsed, 2),
-            "trades_per_day": round(baseline.get("total_trades", 0) / max(1, baseline.get("days", 30)), 2),
+            # Scaled by day_index, not the old inflated value.
+            "to_date": round(per_day * day_index, 2),
+            "trades_per_day": round(baseline.get("total_trades", 0) / b_days, 2),
             "win_rate": baseline.get("win_rate"),
-            "profit_factor": baseline.get("profit_factor"),
+            "profit_factor": b_pf,
             "expectancy": round(baseline.get("total_pnl", 0) / max(1, baseline.get("total_trades", 1)), 2),
+            # Consumers MUST check this before rendering any "vs expected"
+            # verdict. False means the comparison is not meaningful.
+            "comparable": comparable,
+            "warnings": warnings,
+            "baseline_sessions": b_sessions,
+            "live_sessions": live_sessions,
         }
 
     return {
         "scope": scope,
         "start_date": (meta or {}).get("start_date"),
         "days_elapsed": days_elapsed,
+        "day_index": day_index,
         "target_days": (meta or {}).get("target_days", 60),
         "start_equity": start_equity,
         "summary": {
@@ -1086,7 +1185,7 @@ async def websocket_live(ws: WebSocket):
                     "daily_pnl": today.pnl if today else 0.0,
                     "open_positions": len(open_trades),
                     "scheduler": get_scheduler_state(),
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": utc_now().isoformat(),
                 })
             finally:
                 db.close()

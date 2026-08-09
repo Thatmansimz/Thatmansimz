@@ -106,6 +106,26 @@ OUTER_FRACTION = 1.0 / 3.0
 HORIZONS = (1, 2, 3, 6)
 
 
+def _pandas_interval(interval: str | None) -> str | None:
+    """
+    Map a yfinance-style interval ("5m") onto a pandas resample rule ("5min").
+
+    Purchased history is normally 1-minute. The strategy, the backtest and the
+    existing 60-day yfinance baseline are all 5-minute, so resampling on load is
+    what keeps a CSV run comparable to everything already measured.
+    """
+    if not interval:
+        return None
+    s = str(interval).strip().lower()
+    if s.endswith("m") and not s.endswith("mo"):
+        return f"{s[:-1]}min"
+    if s.endswith("h"):
+        return f"{s[:-1]}h"
+    if s.endswith("d"):
+        return f"{s[:-1]}D"
+    return s
+
+
 def atr_series(df: pd.DataFrame, period: int = ATR_PERIOD) -> pd.Series:
     prev_close = df["close"].shift(1)
     tr = pd.concat([
@@ -153,6 +173,13 @@ def main():
     ap.add_argument("--symbol", default="MNQ")
     ap.add_argument("--period", default="60d")
     ap.add_argument("--interval", default="5m")
+    ap.add_argument("--csv", default=None,
+                    help="load bars from a purchased CSV instead of yfinance "
+                         "(removes the 60-day/5m ceiling that makes this test "
+                         "underpowered)")
+    ap.add_argument("--csv-tz", default="America/New_York",
+                    help="timezone the CSV's timestamps are written in "
+                         "(FirstRate ships US/Eastern; some vendors ship UTC)")
     args = ap.parse_args()
 
     print(BAR)
@@ -165,13 +192,21 @@ def main():
     print(f"    buckets : session, then hour within RTH")
     print(SUB)
 
-    from backend.services.market_data import MarketDataService
-    md = MarketDataService()
-    df = md.get_historical(args.symbol, period=args.period, interval=args.interval)
+    if args.csv:
+        from backend.services.csv_data import load_bars
+        df = load_bars(args.csv, tz=args.csv_tz, interval=_pandas_interval(args.interval),
+                       symbol=args.symbol)
+    else:
+        from backend.services.market_data import MarketDataService
+        md = MarketDataService()
+        df = md.get_historical(args.symbol, period=args.period, interval=args.interval)
     if df is None or df.empty:
         print("  ERROR: no market data. Run locally (the sandbox blocks yfinance).")
         sys.exit(1)
-    df = MarketDataService.drop_forming_bar(df)
+    if not args.csv:
+        # Only the live feed has a still-forming final bar. Purchased history is
+        # complete by definition, and the class is not imported on that path.
+        df = MarketDataService.drop_forming_bar(df)
     idx = df.index if df.index.tz is None else df.index.tz_convert(ET)
     df = df.copy(); df.index = idx
     print(f"  {len(df)} completed bars  [{df.index[0]} → {df.index[-1]}]")
@@ -250,26 +285,85 @@ def main():
     for k in HORIZONS:
         if len(rth) >= 20:
             m, se, t = tstat(moves(rth, k))
-            rth_pos.append((k, m, t))
+            rth_pos.append((k, m, se, t))
     if not rth_pos:
         print("  Not enough RTH events to judge.")
     else:
-        any_signal = any(m > 0 and abs(t) >= 2 for _, m, t in rth_pos)
-        all_flat = all(m <= 0 or abs(t) < 2 for _, m, t in rth_pos)
-        for k, m, t in rth_pos:
-            print(f"    RTH k={k}: mean {m:+.4f} ATR, t={t:+.2f}")
+        # AMENDMENT (2026-08-06, BEFORE any purchased data was run through this
+        # script — recorded here so the change is auditable and was not made
+        # after seeing a result we disliked).
+        #
+        # The original rule was `t >= 2` in RTH at any horizon, and its stated
+        # justification was: at n~700 only a LARGE effect can reach t=2, so t=2
+        # implies an economically meaningful effect. That reasoning is correct
+        # at n~700 and INVERTS as n grows:
+        #
+        #     n =    700  ->  smallest mean reaching t=2 is ~0.076 ATR  (>> 0.018, safe)
+        #     n = 10,000  ->  smallest mean reaching t=2 is ~0.010 ATR  (<  0.018, UNSAFE)
+        #
+        # Past roughly n=3,500 the t>=2 bar is cleared by effects too small to
+        # pay the commission — the test starts saying "build on this" about
+        # edges that cannot fund themselves. Buying history, the entire point of
+        # the next step, is what breaks the old threshold. Verified empirically:
+        # a driftless random walk drew t=+2.00 and printed "PREMISE SUPPORTED".
+        #
+        # So the bar is now ECONOMIC, not merely statistical: the lower end of
+        # the effect's confidence interval must clear the profitability
+        # threshold, Bonferroni-corrected across the pre-registered horizons.
+        # "Distinguishable from zero" was never the question worth asking.
+        econ = 0.018
+        z_bonf = 2.50          # 4 pre-registered horizons, two-sided alpha 0.05
+        for k, m, se, t in rth_pos:
+            lo = m - z_bonf * se
+            print(f"    RTH k={k}: mean {m:+.4f} ATR, t={t:+.2f}, "
+                  f"corrected 95% lower bound {lo:+.4f}")
         print()
         # Honest MDE for this actual sample, so the null can be read correctly.
         sd_obs = float(np.std(moves(rth, 1), ddof=1)) if len(rth) >= 20 else 1.0
         mde = 2.0 * sd_obs / math.sqrt(max(1, len(rth)))
         print(f"    [n={len(rth)} RTH events, SD {sd_obs:.2f} ATR"
               f" -> smallest detectable mean at t=2: {mde:.4f} ATR]")
-        print(f"    [effect needed to make the strategy profitable: ~0.018 ATR]")
+        print(f"    [effect needed to make the strategy profitable: ~{econ} ATR]")
+        if mde < econ:
+            print(f"    [n is now large enough that t=2 no longer implies a payable")
+            print(f"     edge — hence the lower-bound test below, not the t test]")
         print()
-        if any_signal:
-            print("  ✅ PREMISE SUPPORTED — strong closes do continue in RTH, at a")
-            print("     magnitude large enough to see. The entry carries signal; the")
-            print("     problem is friction and/or the exit logic. Build on this.")
+
+        pays = [(k, m, se, t) for k, m, se, t in rth_pos
+                if (m - z_bonf * se) > econ]
+        detectable_only = [(k, m, se, t) for k, m, se, t in rth_pos
+                           if m > 0 and abs(t) >= 2 and (m - z_bonf * se) <= econ]
+        all_flat = all(m <= 0 or abs(t) < 2 for _, m, _, t in rth_pos)
+
+        if pays:
+            k, m, se, t = pays[0]
+            print("  ✅ PREMISE SUPPORTED — and large enough to pay for itself.")
+            print(f"     RTH k={k}: even the pessimistic end of the interval "
+                  f"({m - z_bonf * se:+.4f} ATR)")
+            print(f"     clears the ~{econ} ATR needed to cover friction. The entry")
+            print("     carries real, economically usable signal. Build on this.")
+        elif detectable_only:
+            k, m, se, t = detectable_only[0]
+            lo = m - z_bonf * se
+            if lo > 0:
+                # Survives multiplicity: the effect is real, just not payable.
+                print("  ⚠ REAL BUT TOO SMALL TO PAY — this is NOT a green light.")
+                print(f"     RTH k={k}: t={t:+.2f} and the corrected lower bound {lo:+.4f}")
+                print(f"     is above zero, so the effect is probably real — but it is")
+                print(f"     below the ~{econ} ATR needed to cover commission and slippage.")
+                print("     A statistically real edge that cannot fund itself is not a")
+                print("     business.")
+            else:
+                # Reaches t=2 only before correcting for the pre-registered
+                # horizons. This is the shape a pure random walk produces.
+                print("  ⚠ NOT ESTABLISHED — reaches t>=2 only before correction.")
+                print(f"     RTH k={k}: t={t:+.2f} looks significant on its own, but across")
+                print(f"     the {len(rth_pos)} pre-registered horizons the corrected lower bound is")
+                print(f"     {lo:+.4f} ATR — the interval still contains ZERO. One horizon at")
+                print("     t~2 out of several is what noise looks like; a driftless random")
+                print("     walk reproduces this readily.")
+            print("     Under the ORIGINAL t>=2 rule this printed")
+            print("     'PREMISE SUPPORTED — build on this'. It should not have.")
         elif all_flat:
             print("  ❌ NO LARGE EDGE DETECTED at any horizon in RTH.")
             print(f"     Read this correctly: the test can only resolve effects above")

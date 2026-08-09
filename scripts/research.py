@@ -73,6 +73,26 @@ SUB = "-" * 78
 # Core simulation with research knobs. Mirrors scripts/v2_backtest.simulate()
 # exactly, plus the extra gates under study. Defaults reproduce the baseline.
 # ──────────────────────────────────────────────────────────────────────────────
+def _pandas_interval(interval: str | None) -> str | None:
+    """
+    Map a yfinance-style interval ("5m") onto a pandas resample rule ("5min").
+
+    Purchased history is normally 1-minute. The strategy, the backtest and the
+    existing 60-day yfinance baseline are all 5-minute, so resampling on load is
+    what keeps a CSV run comparable to everything already measured.
+    """
+    if not interval:
+        return None
+    s = str(interval).strip().lower()
+    if s.endswith("m") and not s.endswith("mo"):
+        return f"{s[:-1]}min"
+    if s.endswith("h"):
+        return f"{s[:-1]}h"
+    if s.endswith("d"):
+        return f"{s[:-1]}D"
+    return s
+
+
 def simulate(df, symbol, cfg) -> dict:
     strat = MultiSessionStrategy()
     strat.asia_kill_zone_only = cfg.get("asia_kill_zone_only", True)
@@ -272,7 +292,18 @@ def verdict(train: dict, test: dict, base_test: dict | None = None) -> str:
     return "FAILS — unprofitable in both halves"
 
 
+# Set by main() when --csv is passed, so every cmd_* that calls load() picks up
+# the purchased history without threading the flag through each one.
+_CSV: dict = {"path": None, "tz": "America/New_York"}
+
+
 def load(symbol: str, period: str, interval: str = "5m"):
+    if _CSV["path"]:
+        from backend.services.csv_data import load_bars
+        df = load_bars(_CSV["path"], tz=_CSV["tz"],
+                       interval=_pandas_interval(interval), symbol=symbol)
+        print()
+        return df
     from backend.services.market_data import MarketDataService
     md = MarketDataService()
     print(f"  downloading {symbol} {period} @ {interval} ...")
@@ -439,6 +470,11 @@ def cmd_walkforward(args):
 
 def main():
     ap = argparse.ArgumentParser(description="Tajari research harness (anti-overfitting)")
+    ap.add_argument("--csv", default=None,
+                    help="load bars from a purchased CSV instead of yfinance "
+                         "(lifts the 60-day/5m ceiling)")
+    ap.add_argument("--csv-tz", default="America/New_York",
+                    help="timezone the CSV's timestamps are written in")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def common(p):
@@ -470,6 +506,8 @@ def main():
     p.set_defaults(fn=cmd_walkforward)
 
     args = ap.parse_args()
+    _CSV["path"] = getattr(args, "csv", None)
+    _CSV["tz"] = getattr(args, "csv_tz", "America/New_York")
     args.fn(args)
 
 

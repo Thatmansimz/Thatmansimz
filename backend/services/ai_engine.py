@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
 from backend.services.market_data import MarketDataService
+from backend.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +258,7 @@ class AIEngine:
             )
             return None
 
-        expires_at = datetime.utcnow() + timedelta(minutes=30)
+        expires_at = utc_now() + timedelta(minutes=30)
 
         return {
             "symbol": symbol,

@@ -48,7 +48,7 @@ find_python() {
 PY="$(find_python)" || {
   echo "[run_engine] FATAL: no python3 with uvicorn+fastapi found." \
        "Install deps (pip3 install -r requirements.txt) or set TAJARI_PYTHON=/path/to/python3." \
-    | tee -a "logs/engine-$(date +%Y-%m-%d).log"
+    | tee -a "logs/engine-$(TZ=America/New_York date +%F).log"
   sleep 300   # throttle launchd's KeepAlive respawn so the log message repeats calmly
   exit 1
 }
@@ -62,13 +62,35 @@ fi
 
 echo "[run_engine] starting supervised engine on ${HOST}:${PORT} (Ctrl-C to stop)"
 
+# Log file for the CURRENT exchange day. Two bugs lived in the old
+# "logs/engine-$(date +%F).log":
+#   1. $(date) was evaluated once per LAUNCH, not per day. uvicorn runs for days
+#      at a time, so a single file collected every day until the next crash —
+#      engine-2026-08-04.log held Aug 5's lines, making the filenames actively
+#      misleading during forensics.
+#   2. `date` is the host's local zone (Phoenix), while the record, the sessions
+#      and the campaign day are all keyed to ET. The log filename could name a
+#      different calendar day than the trades inside it.
+et_log_path() { echo "logs/engine-$(TZ=America/New_York date +%F).log"; }
+
+# Append each line to whichever ET day it actually belongs to, so a
+# long-running process still yields one file per exchange day.
+rotating_log() {
+  local line
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >> "$(et_log_path)"
+  done
+}
+
 while true; do
-  LOG="logs/engine-$(date +%Y-%m-%d).log"
-  echo "[run_engine] $(date '+%F %T') launching backend → ${LOG}"
+  LOG="$(et_log_path)"
+  echo "[run_engine] $(TZ=America/New_York date '+%F %T %Z') launching backend → ${LOG}"
   # shellcheck disable=SC2086
-  $RUNNER "$PY" -m uvicorn backend.main:app --host "$HOST" --port "$PORT" >>"$LOG" 2>&1
-  CODE=$?
-  echo "[run_engine] $(date '+%F %T') backend exited with code ${CODE} — restarting in ${BACKOFF}s" | tee -a "$LOG"
+  $RUNNER "$PY" -m uvicorn backend.main:app --host "$HOST" --port "$PORT" 2>&1 | rotating_log
+  # PIPESTATUS[0], not $? — $? would be the exit status of rotating_log, which
+  # is always 0, and the backoff/restart logic would never see a real crash.
+  CODE=${PIPESTATUS[0]}
+  echo "[run_engine] $(TZ=America/New_York date '+%F %T %Z') backend exited with code ${CODE} — restarting in ${BACKOFF}s" | tee -a "$(et_log_path)"
   sleep "$BACKOFF"
   # Gentle exponential backoff, capped at 60s, reset after a clean hour is
   # not tracked — simple and good enough for a paper engine.

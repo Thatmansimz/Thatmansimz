@@ -1,0 +1,19 @@
+{
+  "generated_at": "2026-07-29T21:44:07.314692",
+  "symbol": "MNQ",
+  "period": "30d",
+  "days": 30,
+  "total_trades": 95,
+  "win_rate": 29.47,
+  "profit_factor": 0.96,
+  "total_pnl": -932.53,
+  "avg_win": 798.76,
+  "avg_loss": -347.73,
+  "by_session": {
+    "LONDON": -1391.8,
+    "NEW_YORK": 669.51,
+    "ASIA": -210.23
+  },
+  "commission_per_side": 1.5,
+  "slippage_ticks": 1
+}

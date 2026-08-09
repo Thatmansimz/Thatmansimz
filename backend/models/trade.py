@@ -3,6 +3,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime, date
+from backend.clock import (configured_cycle_seconds, et_iso, expected_cycles,
+                           trading_day, utc_now, uptime_pct)
 
 Base = declarative_base()
 
@@ -42,8 +44,8 @@ class Trade(Base):
     # Timestamps
     entry_time = Column(DateTime, nullable=True)
     exit_time = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     # Metadata
     strategy = Column(String(50), nullable=True)
@@ -53,8 +55,10 @@ class Trade(Base):
     exit_reason = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
 
-    # Trade date for daily grouping
-    trade_date = Column(Date, default=date.today, index=True)
+    # Trade date for daily grouping. Defaults to the EXCHANGE date, never
+    # date.today() — that is the host's local date, which on this Phoenix
+    # machine is a different calendar day from ET for 3 hours of every night.
+    trade_date = Column(Date, default=trading_day, index=True)
 
     def to_dict(self) -> dict:
         return {
@@ -74,8 +78,15 @@ class Trade(Base):
             "net_pnl": self.net_pnl,
             "ai_confidence": self.ai_confidence,
             "strategy": self.strategy,
+            # Stored naive UTC, kept as-is for anything that already parses it.
             "entry_time": self.entry_time.isoformat() if self.entry_time else None,
             "exit_time": self.exit_time.isoformat() if self.exit_time else None,
+            # …and the same instants on the exchange clock, which is the clock
+            # trade_date, the sessions and the campaign day are all keyed to.
+            # Without these a reader compares a UTC timestamp against an ET
+            # date and concludes the record disagrees with itself.
+            "entry_time_et": et_iso(self.entry_time),
+            "exit_time_et": et_iso(self.exit_time),
             "trade_date": self.trade_date.isoformat() if self.trade_date else None,
             "exit_reason": self.exit_reason,
         }
@@ -118,8 +129,8 @@ class DailyStats(Base):
     bars_evaluated = Column(Integer, default=0)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     @property
     def win_rate(self) -> float:
@@ -166,12 +177,11 @@ class EquitySnapshot(Base):
     equity = Column(Float, default=0.0)           # balance + unrealized
     unrealized_pnl = Column(Float, default=0.0)
 
-    # Engine heartbeat: scheduler cycles recorded today. At a 60s cycle this
-    # maxes at ~1440/day — uptime% = cycles / 1440.
+    # Engine heartbeat: scheduler cycles recorded on this date.
     cycles = Column(Integer, default=0)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     def to_dict(self) -> dict:
         return {
@@ -180,5 +190,15 @@ class EquitySnapshot(Base):
             "equity": self.equity,
             "unrealized_pnl": self.unrealized_pnl,
             "cycles": self.cycles,
-            "uptime_pct": round(min(100.0, (self.cycles or 0) / 1440.0 * 100.0), 1),
+            # Measured against cycles that were POSSIBLE on this date, not
+            # against a hardcoded full day. For a past date that is the whole
+            # day; for today it is only the elapsed part. Dividing today by a
+            # full day is why this field and forward_test's uptime_today_pct
+            # reported 3% and 100% for the same day in the same response.
+            "uptime_pct": uptime_pct(self.cycles, self.date) if self.date else 0.0,
+            "expected_cycles": expected_cycles(self.date) if self.date else 0,
+            # Which cadence produced the figure above. Without this an
+            # uptime% is uninterpretable — the live engine cycles every
+            # ~120s, so a 60s assumption halves every reading.
+            "cycle_seconds_assumed": configured_cycle_seconds(),
         }

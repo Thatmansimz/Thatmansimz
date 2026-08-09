@@ -156,6 +156,21 @@ class TradingScheduler:
                     logger.info("Skipping signal scan: %s", reason)
                 return
 
+            # We are about to actually look at bars, so the funnel row must
+            # exist NOW. Previously this stayed None until a trade created it,
+            # and _scan_symbol counts a bar only `if daily_stats:` — so the top
+            # of the funnel was recorded exclusively on days that had already
+            # traded, and was blank on precisely the quiet days where "did the
+            # engine even look?" is the whole question. Six consecutive silent
+            # days in the live campaign left no bar count at all.
+            #
+            # Created here rather than above the gate on purpose: a day the
+            # market never opened should leave NO row, so an absent row means
+            # "closed" while a present row with bars_evaluated == 0 means the
+            # engine looked and saw nothing — which is the blind-engine signal.
+            from backend.services.execution import get_or_create_daily_stats
+            today_stats = get_or_create_daily_stats(db)
+
             _scheduler_state["scan_status"] = "scanning"
             for symbol in settings.SYMBOLS:
                 await self._scan_symbol(symbol, db, today_stats)

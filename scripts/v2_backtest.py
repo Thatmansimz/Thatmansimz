@@ -15,6 +15,7 @@ Usage:
 Note: needs Yahoo Finance access for intraday data (yfinance). Run it on your
 local machine — the cloud sandbox blocks outbound market-data calls.
 """
+from backend.clock import utc_now as _utc_now
 from __future__ import annotations
 
 import argparse
@@ -231,7 +232,7 @@ def main():
         from datetime import datetime as _dt
         days = int("".join(c for c in args.period if c.isdigit()) or 30)
         payload = {
-            "generated_at": _dt.utcnow().isoformat(),
+            "generated_at": _utc_now().isoformat(),
             "symbol": args.symbol,
             "period": args.period,
             "days": days,
@@ -244,6 +245,16 @@ def main():
             "by_session": {k: round(v, 2) for k, v in stats["by_session"].items()},
             "commission_per_side": args.commission,
             "slippage_ticks": args.slippage_ticks,
+            # WHICH SYSTEM this baseline describes. Without these the record
+            # endpoint cannot tell whether the benchmark and the live engine
+            # are even the same strategy — and it silently compared a
+            # three-session backtest against a New-York-only live run.
+            # Defaults to the full session set, matching run_v2()'s behaviour
+            # when --sessions is omitted.
+            "sessions": sorted(args.sessions.split(",")) if args.sessions
+                        else ["ASIA", "LONDON", "NEW_YORK"],
+            "target_rr": args.target_rr or None,
+            "risk_per_trade": args.fixed_risk or None,
         }
         _os.makedirs("data", exist_ok=True)
         with open(_os.path.join("data", "baseline.json"), "w") as f:

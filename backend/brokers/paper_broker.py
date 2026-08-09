@@ -8,6 +8,7 @@ from datetime import datetime
 
 from backend.brokers.base import BaseBroker
 from backend.services.costs import slip_entry, slip_stop_exit
+from backend.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class PaperBroker(BaseBroker):
                     "balance": self._balance,
                     "positions": self._positions,
                     "orders": self._orders,
-                    "saved_at": datetime.utcnow().isoformat(),
+                    "saved_at": utc_now().isoformat(),
                 }, f, indent=2)
             os.replace(tmp, STATE_PATH)
         except Exception:
@@ -117,7 +118,7 @@ class PaperBroker(BaseBroker):
             "stop_price": stop_price,
             "target_price": target_price,
             "order_id": order_id,
-            "opened_at": datetime.utcnow().isoformat(),
+            "opened_at": utc_now().isoformat(),
         }
         self._orders[order_id] = {"order_id": order_id, "price": fill_price, "status": "filled"}
         self._save()

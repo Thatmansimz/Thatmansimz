@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Boolean
 from datetime import datetime, date
 from backend.models.trade import Base
+from backend.clock import utc_now
 
 
 class Account(Base):
@@ -39,8 +40,8 @@ class Account(Base):
     failure_reason = Column(String(200), nullable=True)
 
     # Timestamps
-    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, default=utc_now, onupdate=utc_now)
+    created_at = Column(DateTime, default=utc_now)
     last_trade_date = Column(Date, nullable=True)
 
     def to_dict(self) -> dict:

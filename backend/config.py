@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     FORWARD_TEST_TARGET_DAYS: int = 60
 
     # Database
+    # Assumed seconds per scheduler cycle, used ONLY as the uptime%
+    # denominator. The loop sleeps 60s then does work, so the real cadence
+    # is longer — measured at ~120s on the live engine. Set this to the
+    # observed median or uptime under-reports a healthy engine.
+    SCHEDULER_CYCLE_SECONDS: int = 60
+
     DATABASE_URL: str = "sqlite:///./data/trading.db"
 
     # API

@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Text, JSON
 from datetime import datetime
 from backend.models.trade import Base
+from backend.clock import utc_now
 
 
 class Signal(Base):
@@ -40,7 +41,7 @@ class Signal(Base):
     # "win" | "loss" | "breakeven" | "pending"
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=utc_now, index=True)
     expires_at = Column(DateTime, nullable=True)
     triggered_at = Column(DateTime, nullable=True)
 
@@ -74,6 +75,6 @@ class Signal(Base):
         """Check if signal is still valid (not expired or cancelled)."""
         if self.status in ("expired", "cancelled", "taken"):
             return False
-        if self.expires_at and datetime.utcnow() > self.expires_at:
+        if self.expires_at and utc_now() > self.expires_at:
             return False
         return True

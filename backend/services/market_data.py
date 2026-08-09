@@ -12,6 +12,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from backend.clock import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +67,13 @@ def get_feed_health() -> dict:
 def _record_feed_success():
     with _feed_lock:
         _feed_state["consecutive_failures"] = 0
-        _feed_state["last_success"] = datetime.utcnow()
+        _feed_state["last_success"] = utc_now()
 
 
 def _record_feed_failure(error: str) -> int:
     with _feed_lock:
         _feed_state["consecutive_failures"] += 1
-        _feed_state["last_failure"] = datetime.utcnow()
+        _feed_state["last_failure"] = utc_now()
         _feed_state["last_error"] = error[:300]
         return _feed_state["consecutive_failures"]
 
@@ -222,7 +223,7 @@ class MarketDataService:
         stale cache is served (up to _stale_ok_seconds) while the feed heals.
         """
         cache_key = f"{symbol}_{period}_{interval}"
-        now = datetime.utcnow()
+        now = utc_now()
 
         # Return cached data if still fresh
         if cache_key in self._cache:
@@ -310,7 +311,7 @@ class MarketDataService:
                 "low": 0.0,
                 "close": 0.0,
                 "volume": 0,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": utc_now().isoformat(),
             }
 
         last = df.iloc[-1]
@@ -327,7 +328,7 @@ class MarketDataService:
             "low": min(float(last["low"]), current_price),
             "close": current_price,
             "volume": int(last["volume"]) + random.randint(0, 500),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utc_now().isoformat(),
         }
 
     def add_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -491,7 +492,7 @@ class MarketDataService:
             last_ts = df.index[-1]
             ts = last_ts.tz_convert("UTC").to_pydatetime().replace(tzinfo=None) \
                 if last_ts.tzinfo is not None else last_ts.to_pydatetime()
-            if (datetime.utcnow() - ts).total_seconds() < interval_seconds:
+            if (utc_now() - ts).total_seconds() < interval_seconds:
                 return df.iloc[:-1]
         except Exception:
             pass

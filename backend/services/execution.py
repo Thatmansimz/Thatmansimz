@@ -2,17 +2,15 @@ import logging
 from datetime import datetime, date
 from typing import Optional
 
-import pytz
 from sqlalchemy.orm import Session
 
 from backend.models.trade import Trade, DailyStats
 from backend.models.signal import Signal
 from backend.models.account import Account
 from backend.services.risk_manager import RiskManager, POINT_VALUES
+from backend.clock import ET, et_now, trading_day, utc_now
 
 logger = logging.getLogger(__name__)
-
-ET = pytz.timezone("America/New_York")
 
 # Why signals are being turned away, surfaced on /api/status so a silently
 # non-trading engine can never again look identical to a quiet market.
@@ -24,7 +22,7 @@ def _note_rejection(reason: str):
     key = reason.split("|")[0].strip()[:60]
     _rejections[key] = _rejections.get(key, 0) + 1
     _last_rejection["reason"] = key
-    _last_rejection["at"] = datetime.now(ET).isoformat()
+    _last_rejection["at"] = et_now().isoformat()
 
 
 def rejection_summary() -> dict:
@@ -36,17 +34,37 @@ def rejection_summary() -> dict:
     }
 
 
-def trading_day() -> date:
+def get_or_create_daily_stats(db: Session, trade_date: date = None) -> DailyStats:
     """
-    The trading date in EXCHANGE time, not the machine's local time.
+    Today's funnel row, created if it does not exist yet.
 
-    Every gate in this system (sessions, kill zones, market hours) runs on ET.
-    If the record is keyed on the host's local date instead, then on any
-    non-ET machine the recorded day flips mid-session — which silently resets
-    the daily loss limit partway through the Asia window and shifts the equity
-    curve one row off the trade log.
+    This is module-level and not a method because the SCHEDULER needs it too,
+    and it previously did not have it. The scheduler only ever *queried* for
+    today's row and passed the result — possibly None — into the scanner, which
+    then guarded with `if daily_stats:` before counting a bar. Rows are only
+    otherwise created when a signal executes. Net effect: bars_evaluated was
+    recorded only on days that had ALREADY produced a trade.
+
+    That defeated the entire purpose of the counter. The top of the funnel
+    exists to distinguish "the strategy looked and found nothing" from "the
+    engine never looked at all" — and it was blank on exactly the days where
+    that distinction matters. Six consecutive quiet days in the live campaign
+    left no bar count whatsoever, while the funnel still reported "Healthy"
+    from stale aggregates.
     """
-    return datetime.now(ET).date()
+    trade_date = trade_date or trading_day()
+    stats = db.query(DailyStats).filter(DailyStats.date == trade_date).first()
+    if not stats:
+        account = db.query(Account).first()
+        balance = account.balance if account else 0.0
+        stats = DailyStats(
+            date=trade_date,
+            starting_balance=balance,
+            current_balance=balance,
+        )
+        db.add(stats)
+        db.commit()
+    return stats
 
 
 def _point_value(symbol: str) -> float:
@@ -61,19 +79,9 @@ class ExecutionService:
         self.db = db
 
     def _get_or_create_daily_stats(self, trade_date: date = None) -> DailyStats:
-        trade_date = trade_date or trading_day()
-        stats = self.db.query(DailyStats).filter(DailyStats.date == trade_date).first()
-        if not stats:
-            account = self.db.query(Account).first()
-            balance = account.balance if account else 0.0
-            stats = DailyStats(
-                date=trade_date,
-                starting_balance=balance,
-                current_balance=balance,
-            )
-            self.db.add(stats)
-            self.db.commit()
-        return stats
+        # Delegates to the module-level helper so the execution path and the
+        # scheduler path can never drift into creating rows differently.
+        return get_or_create_daily_stats(self.db, trade_date)
 
     def _get_account(self) -> Optional[Account]:
         return self.db.query(Account).first()
@@ -173,7 +181,7 @@ class ExecutionService:
             strategy=signal_data.get("strategy", "ai_ensemble"),
             indicators_json=signal_data.get("indicators", {}),
             status="triggered",
-            triggered_at=datetime.utcnow(),
+            triggered_at=utc_now(),
         )
         self.db.add(db_signal)
         self.db.flush()
@@ -240,7 +248,7 @@ class ExecutionService:
             ai_confidence=signal_data["confidence"],
             signal_id=db_signal.id,
             broker_order_id=order_result.get("order_id"),
-            entry_time=datetime.utcnow(),
+            entry_time=utc_now(),
             trade_date=trading_day(),
         )
         self.db.add(trade)
@@ -447,7 +455,7 @@ class ExecutionService:
         net_pnl = gross_pnl - commission
 
         trade.exit_price = exit_price
-        trade.exit_time = datetime.utcnow()
+        trade.exit_time = utc_now()
         trade.pnl = round(gross_pnl, 2)
         trade.net_pnl = round(net_pnl, 2)
         trade.commission = commission

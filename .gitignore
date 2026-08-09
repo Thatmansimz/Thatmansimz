@@ -60,3 +60,4 @@ frontend/.env.production.local
 logs/
 data/paper_state.json
 data/forward_test.json
+backups/

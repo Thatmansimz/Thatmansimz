@@ -98,6 +98,11 @@ type RecordGroup = { trades: number; wins: number; pnl: number; win_rate: number
 type TradeRecord = {
   scope?: string;
   start_date?: string;
+  // day_index is the 1-based campaign day ("day 10 of 60"). days_elapsed is how
+  // many days have actually passed, which is one lower. The header wants the
+  // index — using days_elapsed made THE RECORD read "day 9" while the cockpit
+  // read "day 10" for the same moment.
+  day_index?: number;
   days_elapsed?: number;
   target_days?: number;
   start_equity: number;
@@ -116,7 +121,13 @@ type TradeRecord = {
   baseline?: { total_trades: number; win_rate: number; profit_factor?: number | null;
                total_pnl: number; days: number; period?: string; symbol?: string } | null;
   expected?: { per_day: number; to_date: number; trades_per_day: number;
-               win_rate?: number; profit_factor?: number | null; expectancy: number } | null;
+               win_rate?: number; profit_factor?: number | null; expectancy: number;
+               // comparable is false when the baseline is unprofitable, records
+               // no session set, or disagrees with the live config. It MUST be
+               // checked before showing any "vs expected" framing — otherwise a
+               // losing benchmark makes any positive result look like an edge.
+               comparable?: boolean; warnings?: string[];
+               baseline_sessions?: string[] | null; live_sessions?: string[] } | null;
 };
 type Insights = {
   total_trades: number;
@@ -1044,7 +1055,7 @@ function RecordView({ rec }: { rec: TradeRecord | null }) {
               Forward-Test Record
             </h2>
             <p className="text-[11px] font-mono-hud mt-1" style={{ color: "#475569" }}>
-              {rec.scope} · day {rec.days_elapsed} of {rec.target_days} · paper · MNQ
+              {rec.scope} · day {rec.day_index ?? rec.days_elapsed} of {rec.target_days} · paper · MNQ
             </p>
           </div>
           <div className="text-right">
@@ -1087,7 +1098,11 @@ function RecordView({ rec }: { rec: TradeRecord | null }) {
         <SectionHeader
           title="Equity Curve vs Backtest Expectation"
           sub={rec.expected
-            ? `dashed = what the backtest predicts ($${rec.expected.expectancy.toFixed(0)}/trade)`
+            ? (rec.expected.comparable === false
+                // Sitting above a DECLINING dashed line reads as outperformance.
+                // Say what the line actually is before it gets read as a target.
+                ? `dashed = an INVALID baseline ($${rec.expected.expectancy.toFixed(0)}/trade) — not a target, see below`
+                : `dashed = what the backtest predicts ($${rec.expected.expectancy.toFixed(0)}/trade)`)
             : "run scripts/v2_backtest.py --save-baseline to overlay the backtest"}
         />
         {curve.length > 0 ? (
@@ -1182,19 +1197,49 @@ function RecordView({ rec }: { rec: TradeRecord | null }) {
         <GroupTable title="By Instrument" groups={rec.by_symbol} />
       </div>
 
-      {/* Baseline */}
-      {rec.baseline && (
-        <div className="glass-bright rounded-2xl p-5">
-          <SectionHeader title="Backtest Baseline"
-                         sub={`${rec.baseline.symbol ?? "MNQ"} · ${rec.baseline.period ?? "30d"} · the target this record is measured against`} />
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCell label="Trades" value={`${rec.baseline.total_trades}`} sub={`over ${rec.baseline.days} days`} />
-            <StatCell label="Win Rate" value={`${rec.baseline.win_rate}%`} color="#a78bfa" />
-            <StatCell label="Profit Factor" value={rec.baseline.profit_factor?.toFixed(2) ?? "—"} color="#a78bfa" />
-            <StatCell label="Net P&L" value={`$${rec.baseline.total_pnl.toLocaleString()}`} color="#a78bfa" />
+      {/* Baseline. Never describe it as "the target" without checking that it
+          IS one: a benchmark that loses money, or that measured a different
+          session set, makes any positive result look like an edge. */}
+      {rec.baseline && (() => {
+        const invalid = rec.expected && rec.expected.comparable === false;
+        const warnings = rec.expected?.warnings ?? [];
+        return (
+          <div className="glass-bright rounded-2xl p-5">
+            <SectionHeader title="Backtest Baseline"
+                           sub={`${rec.baseline.symbol ?? "MNQ"} · ${rec.baseline.period ?? "30d"} · ${
+                             invalid
+                               ? "NOT a valid benchmark — see below"
+                               : "the target this record is measured against"
+                           }`} />
+            {invalid && (
+              <div className="rounded-xl p-3 mb-3"
+                   style={{ background: "rgba(255,51,102,0.08)", border: "1px solid rgba(255,51,102,0.35)" }}>
+                <p className="text-[10px] tracking-widest uppercase font-mono-hud mb-2" style={{ color: "#ff3366" }}>
+                  ⚠ this comparison is not meaningful
+                </p>
+                {warnings.map((w, i) => (
+                  <p key={i} className="text-[11px] font-mono-hud leading-relaxed mb-1" style={{ color: "#fca5a5" }}>
+                    · {w}
+                  </p>
+                ))}
+                <p className="text-[10px] font-mono-hud mt-2" style={{ color: "#64748b" }}>
+                  Beating an unprofitable or mismatched baseline is not evidence of an edge.
+                </p>
+              </div>
+            )}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCell label="Trades" value={`${rec.baseline.total_trades}`} sub={`over ${rec.baseline.days} days`} />
+              <StatCell label="Win Rate" value={`${rec.baseline.win_rate}%`}
+                        color={invalid ? "#ff3366" : "#a78bfa"} />
+              <StatCell label="Profit Factor" value={rec.baseline.profit_factor?.toFixed(2) ?? "—"}
+                        color={invalid ? "#ff3366" : "#a78bfa"}
+                        sub={(rec.baseline.profit_factor ?? 1) < 1 ? "below break-even" : undefined} />
+              <StatCell label="Net P&L" value={`$${rec.baseline.total_pnl.toLocaleString()}`}
+                        color={rec.baseline.total_pnl < 0 ? "#ff3366" : "#a78bfa"} />
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
