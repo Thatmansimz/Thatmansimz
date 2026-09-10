@@ -38,6 +38,8 @@ For a production build, run `npm run build`. The existing Docker image uses Next
 
 ## Hosted partner workspace
 
+Open or share **[Tajari production](https://tajari.vercel.app)**. The frontend release is commit `138b0e7`, deployed September 10, 2026.
+
 The production frontend is deployed to the `tajari` project in the `storm-booked` Vercel team. Deploy from `frontend/`, using the committed `vercel.json` and lockfile. This serves the same evidence workspace as the local app, including the downloadable historical evidence, the test plan, live-pilot requirements and pricing calculator.
 
 The hosted workspace does not contain the Python engine, trading database, broker credentials or licensed price bars. With no `TAJARI_API_URL` configured on Vercel, the monitor explicitly reports that the local engine is not connected. It does not invent a zero P&L or stopped-engine status. All trading protections remain in the canonical backend code; publishing the frontend does not activate or replace a running engine.

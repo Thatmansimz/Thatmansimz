@@ -180,4 +180,8 @@ This master document is the working plan. Keep each evidence release immutable, 
 
 The shared native document is [Tajari — Master Plan, Pricing & Evidence](https://docs.google.com/document/d/1lgEJ4ND83JNOWouX8QoYAcEl_BB4NahogO3FElErMsY/edit). Taj has commenter access and read access to the original evidence artifacts.
 
+### Production workspace — September 10, 2026
+
+The approved layout is live at **[tajari.vercel.app](https://tajari.vercel.app)**. Share this stable link with Taj; it does not require Vercel login or the local computer to remain online. Frontend release `138b0e7` is deployed to Vercel project `tajari`. The hosted workspace includes historical evidence, the test plan, the six live-pilot requirements and pricing tools. Its paper monitor explicitly reports that the local engine is not connected. No broker, account database or trading control was published. All six live-pilot gates remain unverified. The existing local paper engine was not replaced. The workspace is accessible to anyone with the URL; Google Doc and Drive permissions are unchanged.
+
 A separate application checkout now implements the evidence workspace, six blocked live-pilot gates, pricing calculator, test guidance and selected simulator/API repairs. The release notes distinguish those repairs from remaining Nullius provenance/statistics work and incomplete broker integration. The original paper engine was not replaced. All six live gates remain unverified; no live order is authorized.
