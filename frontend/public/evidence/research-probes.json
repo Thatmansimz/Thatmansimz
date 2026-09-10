@@ -1,0 +1,32 @@
+{
+  "reused_research": {
+    "kind": "pays",
+    "tradeable": true,
+    "headline": "Pays: worst-case corrected edge +10.300 pts against a 2.000 pt bar, on 24 unseen observations."
+  },
+  "stronger_unseen": {
+    "kind": "refuted",
+    "tradeable": false,
+    "headline": "Refuted by 120 observations the rule never saw: mean +14.00 pts against a fitted claim of +3.00."
+  },
+  "small_sample_contradiction": {
+    "kind": "pays",
+    "tradeable": true,
+    "prints_underpowered": true
+  },
+  "existing_economics_patch": {
+    "nan_capacity_fillable": false,
+    "fitted_tradeable": false
+  },
+  "spec_tests": {
+    "passed": 45,
+    "failed": []
+  },
+  "unreadable_measure": {
+    "seal_ok": true,
+    "notes": [
+      "sealed at 2026-09-01T09:30:00-04:00 (exchange time; not proof of custody)",
+      "measure source could not be read, so its body was NOT checked against the seal"
+    ]
+  }
+}

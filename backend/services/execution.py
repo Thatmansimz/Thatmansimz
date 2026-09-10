@@ -298,6 +298,10 @@ class ExecutionService:
 
         current_price = position.get("current_price", trade.entry_price)
 
+        if position.get("reconciliation_required"):
+            logger.error("Trade %s requires market-history reconciliation: %s", trade.id, position["reconciliation_required"])
+            return
+
         # Update the trailing stop using the SAME rule the backtest ran.
         # The old path used calculate_trailing_stop (breakeven at 0.5R, no
         # trail, and it measured R against its own mutated output so it froze
@@ -312,11 +316,14 @@ class ExecutionService:
         # Trailing may only tighten, never widen.
         improved = (new_stop > trade.stop_loss) if trade.side == "long" else (new_stop < trade.stop_loss)
         if improved:
-            trade.stop_loss = new_stop
             try:
-                await self.broker.update_stop(trade.broker_order_id, new_stop)
-            except Exception:
-                pass
+                accepted = await self.broker.update_stop(trade.broker_order_id, new_stop)
+                if accepted is True:
+                    trade.stop_loss = new_stop
+                else:
+                    logger.error("Stop update rejected for trade %s; retaining acknowledged stop", trade.id)
+            except Exception as exc:
+                logger.error("Stop update failed for trade %s: %s", trade.id, exc)
 
         # Calculate unrealized P&L
         pv = _point_value(trade.symbol)
@@ -361,23 +368,19 @@ class ExecutionService:
         except Exception:
             ema = None
 
-        if trade.side == "long":
-            if current_price >= trade.entry_price + r and stop < trade.entry_price:
-                stop = trade.entry_price
-            if ema is not None:
-                stop = max(stop, min(ema, current_price - r * 0.25))
-        else:
-            if current_price <= trade.entry_price - r and stop > trade.entry_price:
-                stop = trade.entry_price
-            if ema is not None:
-                stop = min(stop, max(ema, current_price + r * 0.25))
-        return round(stop, 2)
+        from backend.services.exit_rules import trail_v2
+        return trail_v2(trade.symbol, trade.side, trade.entry_price,
+                        init_stop, stop, current_price, ema)
 
     async def _reconcile_closed_trade(self, trade: Trade):
         try:
             fill = await self.broker.get_last_fill(trade.broker_order_id)
         except Exception:
             fill = None
+
+        if fill and fill.get("reconciliation_required"):
+            logger.error("Trade %s exit requires reconciliation: %s", trade.id, fill["reconciliation_required"])
+            return
 
         # Only an actual EXIT fill may close a trade. The old code defaulted to
         # trade.take_profit when the fill was missing — i.e. it assumed the most

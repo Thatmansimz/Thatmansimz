@@ -1,19 +1,19 @@
 import type { Metadata } from "next";
 import "./globals.css";
-
 export const metadata: Metadata = {
-  title: "Tajari AI Trading",
-  description: "Autonomous AI-powered day trading platform — Tajari",
+  title: "Tajari · Evidence workspace",
+  description:
+    "Research evidence, technical evaluation and trading readiness for Tajari.",
+  robots: { index: false, follow: false },
 };
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className="min-h-screen antialiased" style={{ background: "#050913" }}>
-        {/* Scanning sweep line */}
-        <div className="scan-line" />
-        <div style={{ position: "relative", zIndex: 1 }}>{children}</div>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

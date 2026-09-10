@@ -4,7 +4,8 @@ import uuid
 import logging
 import tempfile
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
+import math
 
 from backend.brokers.base import BaseBroker
 from backend.services.costs import slip_entry, slip_stop_exit
@@ -19,6 +20,11 @@ STATE_PATH = os.path.join("data", "paper_state.json")
 DEFAULT_BALANCE = 50000.0
 
 
+def _event_time(value):
+    stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
+
+
 def _load_state() -> dict:
     try:
         with open(STATE_PATH) as f:
@@ -28,7 +34,7 @@ def _load_state() -> dict:
             "positions": dict(state.get("positions", {})),
             "orders": dict(state.get("orders", {})),
         }
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+    except FileNotFoundError:
         return {"balance": DEFAULT_BALANCE, "positions": {}, "orders": {}}
 
 
@@ -143,15 +149,36 @@ class PaperBroker(BaseBroker):
         # ~2x more often than it forgave winners). Each bar is judged exactly
         # once, tracked via last_bar_ts.
         try:
-            bar = self.market_data.get_last_bar(symbol)
-        except Exception:
-            bar = None
+            opened = _event_time(pos["opened_at"])
+            if hasattr(self.market_data, "get_completed_bars_since"):
+                bars = self.market_data.get_completed_bars_since(symbol, pos.get("last_bar_ts") or pos["opened_at"])
+            else:
+                bar = self.market_data.get_last_bar(symbol)
+                bars = [bar] if bar else []
+            bars = sorted(bars, key=lambda b: _event_time(b["ts"]))
+        except Exception as exc:
+            pos["reconciliation_required"] = f"Market-event history unavailable: {type(exc).__name__}"
+            self._save()
+            return dict(pos)
 
         slip_ticks = int(getattr(self.config, "SLIPPAGE_TICKS", 1))
         hit = None
         cause = None
 
-        if bar and bar["ts"] != pos.get("last_bar_ts"):
+        for bar in bars:
+            ts = _event_time(bar["ts"])
+            previous = _event_time(pos["last_bar_ts"]) if pos.get("last_bar_ts") else None
+            # Bar timestamps denote interval START. The entry bar contains
+            # pre-entry prices and cannot safely establish an intrabar exit.
+            if ts < opened or (previous is not None and ts <= previous):
+                continue
+            if (utc_now().replace(tzinfo=timezone.utc) - ts).total_seconds() < 300:
+                continue
+            if not all(math.isfinite(float(bar[k])) for k in ("open", "high", "low", "close")):
+                pos["reconciliation_required"] = "Non-finite market event"
+                break
+            if (ts - (previous or opened)).total_seconds() > 300:
+                pos["reconciliation_required"] = "Gap in eligible market history; session closure or missing data requires review"
             pos["last_bar_ts"] = bar["ts"]
             pos["current_price"] = round(bar["close"], 2)
             target = pos["target_price"]
@@ -159,19 +186,23 @@ class PaperBroker(BaseBroker):
             hi, lo = bar["high"], bar["low"]
             if pos["side"] == "long":
                 if lo <= stop:
-                    hit, cause = slip_stop_exit(symbol, "long", stop, slip_ticks), "stop"
+                    hit, cause = slip_stop_exit(symbol, "long", min(stop, bar["open"]), slip_ticks), "stop"
                 elif hi >= target:
                     hit, cause = target, "target"
             else:
                 if hi >= stop:
-                    hit, cause = slip_stop_exit(symbol, "short", stop, slip_ticks), "stop"
+                    hit, cause = slip_stop_exit(symbol, "short", max(stop, bar["open"]), slip_ticks), "stop"
                 elif lo <= target:
                     hit, cause = target, "target"
+            if hit is not None:
+                break
 
         if hit is not None:
             self._orders[pos["order_id"]] = {
                 "order_id": pos["order_id"], "price": round(float(hit), 2),
                 "status": "filled", "exit": True, "cause": cause,
+                "event_time": pos.get("last_bar_ts"),
+                "reconciliation_required": pos.get("reconciliation_required"),
             }
             del self._positions[symbol]
             self._save()
@@ -227,6 +258,13 @@ class PaperBroker(BaseBroker):
 
     async def get_last_fill(self, order_id: str) -> Optional[dict]:
         return self._orders.get(order_id)
+
+    def reconciliation_issues(self) -> list[dict]:
+        return [
+            {"order_id": record.get("order_id"), "reason": record["reconciliation_required"]}
+            for record in [*self._positions.values(), *self._orders.values()]
+            if record.get("reconciliation_required")
+        ]
 
     async def update_stop(self, order_id: str, new_stop: float) -> bool:
         for pos in self._positions.values():

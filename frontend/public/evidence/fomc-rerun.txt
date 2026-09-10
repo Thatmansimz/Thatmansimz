@@ -1,0 +1,41 @@
+==========================================================================================
+  FOMC PRE-DECISION DRIFT — BACKWARD OUT-OF-SAMPLE 2019-2021
+  data 2019-01-01 18:00:00-05:00 -> 2021-12-31 16:59:00-05:00
+  23 scheduled decisions, 23 with usable bars
+==========================================================================================
+
+                         2022-24 fitted   2019-21 unseen
+  n                                  24               23
+  mean pts                       +11.18            +0.80
+  median pts                          —            -0.25
+  hit rate %                       83.3             47.8
+  one-sided t                      4.44             0.47
+  SD                               12.3              8.2
+  net $/contract                                   +1.69
+
+  90% CI  [-1.50, +3.11]
+
+  per year:
+    2019:  n= 8  mean=  +0.41  hit= 62.5%  t= 0.32
+    2020:  n= 7  mean=  +4.36  hit= 57.1%  t= 1.17
+    2021:  n= 8  mean=  -1.91  hit= 25.0%  t=-0.55
+
+  11W avg +7.2 | 12L avg -5.1 | payoff 1.42x
+  worst 4: -12, -7, -7, -6
+  best  4: +7, +16, +18, +20
+  drop best 3: mean -1.79  t=-1.63
+
+  placebo — same days, 15m windows ending elsewhere:
+         12:00  n=23  mean=  -3.30  t=-1.28
+         13:00  n=23  mean=  +1.64  t= 0.89
+    14:00 REAL  n=23  mean=  +0.80  t= 0.47  <-- the rule
+         15:00  n=23  mean=  -0.25  t=-0.04
+
+  13:45 entry liquidity: median 416/min  (min 141)
+
+==========================================================================================
+  DID NOT HOLD out-of-sample. The 2022-2024 result was regime or chance.
+  Learned for the price of a free data pull instead of a funded account.
+==========================================================================================
+  sealed 2025-2026 holdout untouched. range 2019-01-01 18:00:00-05:00 -> 2021-12-31 16:59:00-05:00
+==========================================================================================

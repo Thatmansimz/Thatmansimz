@@ -69,7 +69,8 @@ class AIEngine:
           0  = neutral
         """
         closes = df["close"].values
-        labels = np.zeros(len(closes), dtype=int)
+        labels = np.zeros(len(closes), dtype=float)
+        labels[max(0, len(closes) - lookahead):] = np.nan
         target_pct = 0.005
         stop_pct = 0.0025
 
@@ -81,20 +82,21 @@ class AIEngine:
             short_stop = entry * (1 + stop_pct)
 
             long_hit = short_hit = False
+            long_alive = short_alive = True
             for j in range(1, lookahead + 1):
                 future = closes[i + j]
-                if not long_hit and not short_hit:
+                if long_alive:
                     if future >= long_target:
                         long_hit = True
                         break
-                    if future <= long_stop:
-                        break
-                if not long_hit and not short_hit:
+                    long_alive = future > long_stop
+                if short_alive:
                     if future <= short_target:
                         short_hit = True
                         break
-                    if future >= short_stop:
-                        break
+                    short_alive = future < short_stop
+                if not long_alive and not short_alive:
+                    break
 
             if long_hit:
                 labels[i] = 1
@@ -111,8 +113,14 @@ class AIEngine:
         if len(df) < 200:
             return {"error": f"Insufficient data for {symbol}: {len(df)} bars"}
 
-        labels = self._label_trades(df)
+        lookahead = 6
+        labels = self._label_trades(df, lookahead=lookahead)
         df["label"] = labels
+        # Split raw chronological rows before dropping unavailable features so
+        # six purged training bars cover the actual label horizon.
+        split = int(len(df) * .8)
+        train_df = df.iloc[:max(0, split - lookahead)].dropna()
+        test_df = df.iloc[split:].dropna()
         df = df.dropna()
 
         features = self.build_features(df)
@@ -121,9 +129,10 @@ class AIEngine:
         if len(features.columns) == 0:
             return {"error": "No features available after indicator calculation"}
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            features, y, test_size=0.2, shuffle=False
-        )
+        X_train, y_train = self.build_features(train_df), train_df["label"]
+        X_test, y_test = self.build_features(test_df), test_df["label"]
+        if len(X_train) < 100 or len(X_test) < 10 or y_train.nunique() < 2:
+            return {"error": "Insufficient purged training/test data or label classes"}
 
         pipeline = Pipeline([
             ("scaler", StandardScaler()),

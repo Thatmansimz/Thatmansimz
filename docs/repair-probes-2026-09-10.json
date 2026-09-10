@@ -1,0 +1,24 @@
+{
+  "pre_entry_bar_exit": {
+    "opened_at": "2026-09-10T19:03:44.315727",
+    "bar_timestamp": "2020-01-02 09:30:00-05:00",
+    "position_closed": false,
+    "fill": {
+      "order_id": "f43c7e0f",
+      "price": 100.0,
+      "status": "filled"
+    }
+  },
+  "ml_downtrend_labels": {
+    "counts": {
+      "-1.0": 24
+    },
+    "short_labels": 24
+  },
+  "trail_before_1R": {
+    "initial_stop": 90,
+    "price": 102,
+    "one_R_price": 110,
+    "returned_stop": 90
+  }
+}

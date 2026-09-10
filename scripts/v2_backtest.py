@@ -75,13 +75,13 @@ def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
             # targets fill at price (resting limit).
             if d["dir"] == "long":
                 if lo <= d["stop"]:
-                    fill = slip_stop_exit(symbol, "long", d["stop"], slippage_ticks)
+                    fill = slip_stop_exit(symbol, "long", min(d["stop"], float(bar["open"])), slippage_ticks)
                     pnl = (fill - d["entry"]) * pv * d["contracts"]; exited = True
                 elif hi >= d["t2"]:
                     pnl = (d["t2"] - d["entry"]) * pv * d["contracts"]; exited = True
             else:
                 if hi >= d["stop"]:
-                    fill = slip_stop_exit(symbol, "short", d["stop"], slippage_ticks)
+                    fill = slip_stop_exit(symbol, "short", max(d["stop"], float(bar["open"])), slippage_ticks)
                     pnl = (d["entry"] - fill) * pv * d["contracts"]; exited = True
                 elif lo <= d["t2"]:
                     pnl = (d["entry"] - d["t2"]) * pv * d["contracts"]; exited = True
@@ -92,17 +92,10 @@ def simulate(df: pd.DataFrame, symbol: str, only_session: str | None,
                 open_pos = None
             else:
                 # trailing: at +1R move to breakeven, then trail behind EMA-12
-                r = d["risk_pts"]
-                if d["dir"] == "long":
-                    if close >= d["entry"] + r and d["stop"] < d["entry"]:
-                        d["stop"] = d["entry"]
-                    ema = float(window["close"].ewm(span=12, adjust=False).mean().iloc[-1])
-                    d["stop"] = max(d["stop"], min(ema, close - r * 0.25))
-                else:
-                    if close <= d["entry"] - r and d["stop"] > d["entry"]:
-                        d["stop"] = d["entry"]
-                    ema = float(window["close"].ewm(span=12, adjust=False).mean().iloc[-1])
-                    d["stop"] = min(d["stop"], max(ema, close + r * 0.25))
+                from backend.services.exit_rules import trail_v2
+                ema = float(window["close"].ewm(span=12, adjust=False).mean().iloc[-1])
+                initial_stop = d["entry"] - d["risk_pts"] if d["dir"] == "long" else d["entry"] + d["risk_pts"]
+                d["stop"] = trail_v2(symbol, d["dir"], d["entry"], initial_stop, d["stop"], close, ema)
                 continue  # one position at a time
 
         # ── look for a new entry ──
