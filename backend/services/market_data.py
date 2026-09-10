@@ -516,6 +516,19 @@ class MarketDataService:
             "low": float(row["low"]), "close": float(row["close"]),
         }
 
+    def get_completed_bars_since(self, symbol: str, since: str) -> list[dict]:
+        """Replay retained events in order; absence of history never invents fills."""
+        df = self.drop_forming_bar(self.get_historical(symbol, period="5d", interval="5m"))
+        if df is None or df.empty:
+            raise ValueError("No completed market events available")
+        boundary = pd.Timestamp(since)
+        boundary = boundary.tz_localize("UTC") if boundary.tzinfo is None else boundary.tz_convert("UTC")
+        return [
+            {"ts": str(ts), **{k: float(row[k]) for k in ("open", "high", "low", "close")}}
+            for ts, row in df.iterrows()
+            if (pd.Timestamp(ts).tz_localize("UTC") if pd.Timestamp(ts).tzinfo is None else pd.Timestamp(ts).tz_convert("UTC")) >= boundary
+        ]
+
     def get_last_close(self, symbol: str) -> Optional[float]:
         """
         The most recent REAL traded close — no simulated noise.

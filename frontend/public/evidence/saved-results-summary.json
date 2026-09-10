@@ -1,0 +1,244 @@
+{
+  "results/NEW_YORK_": {
+    "complete_outputs": 4,
+    "trades": 379,
+    "net_pnl": -14253.44,
+    "mean_per_trade": -37.61,
+    "rows": [
+      {
+        "file": "results/NEW_YORK_2022-01-01.txt",
+        "trades": 94,
+        "pnl": -2262.37
+      },
+      {
+        "file": "results/NEW_YORK_2022-04-01.txt",
+        "trades": 88,
+        "pnl": -7526.44
+      },
+      {
+        "file": "results/NEW_YORK_2022-07-01.txt",
+        "trades": 103,
+        "pnl": 1721.95
+      },
+      {
+        "file": "results/NEW_YORK_2022-10-01.txt",
+        "trades": 94,
+        "pnl": -6186.58
+      }
+    ]
+  },
+  "results_frictionless/NEW_YORK_": {
+    "complete_outputs": 12,
+    "trades": 1050,
+    "net_pnl": -15543.15,
+    "mean_per_trade": -14.8,
+    "rows": [
+      {
+        "file": "results_frictionless/NEW_YORK_2022-01-01.txt",
+        "trades": 94,
+        "pnl": 786.57
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2022-04-01.txt",
+        "trades": 88,
+        "pnl": -3950.46
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2022-07-01.txt",
+        "trades": 103,
+        "pnl": 6806.89
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2022-10-01.txt",
+        "trades": 94,
+        "pnl": -2430.46
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2023-01-01.txt",
+        "trades": 90,
+        "pnl": -1354.96
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2023-04-01.txt",
+        "trades": 76,
+        "pnl": -5818.45
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2023-07-01.txt",
+        "trades": 90,
+        "pnl": -3189.17
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2023-10-01.txt",
+        "trades": 89,
+        "pnl": 1912.89
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2024-01-01.txt",
+        "trades": 73,
+        "pnl": -1345.21
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2024-04-01.txt",
+        "trades": 87,
+        "pnl": 78.11
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2024-07-01.txt",
+        "trades": 90,
+        "pnl": -6447.75
+      },
+      {
+        "file": "results_frictionless/NEW_YORK_2024-10-01.txt",
+        "trades": 76,
+        "pnl": -591.15
+      }
+    ]
+  },
+  "results_invert/NY_inv_": {
+    "complete_outputs": 12,
+    "trades": 1082,
+    "net_pnl": -59475.09,
+    "mean_per_trade": -54.97,
+    "rows": [
+      {
+        "file": "results_invert/NY_inv_2022-01-01.txt",
+        "trades": 100,
+        "pnl": -4156.89
+      },
+      {
+        "file": "results_invert/NY_inv_2022-04-01.txt",
+        "trades": 93,
+        "pnl": -6558.49
+      },
+      {
+        "file": "results_invert/NY_inv_2022-07-01.txt",
+        "trades": 107,
+        "pnl": -15705.81
+      },
+      {
+        "file": "results_invert/NY_inv_2022-10-01.txt",
+        "trades": 95,
+        "pnl": -3096.42
+      },
+      {
+        "file": "results_invert/NY_inv_2023-01-01.txt",
+        "trades": 93,
+        "pnl": -538.64
+      },
+      {
+        "file": "results_invert/NY_inv_2023-04-01.txt",
+        "trades": 77,
+        "pnl": -2307.47
+      },
+      {
+        "file": "results_invert/NY_inv_2023-07-01.txt",
+        "trades": 91,
+        "pnl": -2829.32
+      },
+      {
+        "file": "results_invert/NY_inv_2023-10-01.txt",
+        "trades": 92,
+        "pnl": -11534.54
+      },
+      {
+        "file": "results_invert/NY_inv_2024-01-01.txt",
+        "trades": 76,
+        "pnl": -8140.92
+      },
+      {
+        "file": "results_invert/NY_inv_2024-04-01.txt",
+        "trades": 87,
+        "pnl": -7086.5
+      },
+      {
+        "file": "results_invert/NY_inv_2024-07-01.txt",
+        "trades": 94,
+        "pnl": 3100.26
+      },
+      {
+        "file": "results_invert/NY_inv_2024-10-01.txt",
+        "trades": 77,
+        "pnl": -620.35
+      }
+    ]
+  },
+  "results_frictionless/ALL_": {
+    "complete_outputs": 12,
+    "trades": 2036,
+    "net_pnl": -40362.92,
+    "mean_per_trade": -19.82,
+    "rows": [
+      {
+        "file": "results_frictionless/ALL_2022-01-01.txt",
+        "trades": 176,
+        "pnl": 504.03
+      },
+      {
+        "file": "results_frictionless/ALL_2022-04-01.txt",
+        "trades": 168,
+        "pnl": -7793.28
+      },
+      {
+        "file": "results_frictionless/ALL_2022-07-01.txt",
+        "trades": 192,
+        "pnl": 4234.82
+      },
+      {
+        "file": "results_frictionless/ALL_2022-10-01.txt",
+        "trades": 178,
+        "pnl": -3278.03
+      },
+      {
+        "file": "results_frictionless/ALL_2023-01-01.txt",
+        "trades": 173,
+        "pnl": -1475.31
+      },
+      {
+        "file": "results_frictionless/ALL_2023-04-01.txt",
+        "trades": 158,
+        "pnl": -7098.4
+      },
+      {
+        "file": "results_frictionless/ALL_2023-07-01.txt",
+        "trades": 170,
+        "pnl": -1754.32
+      },
+      {
+        "file": "results_frictionless/ALL_2023-10-01.txt",
+        "trades": 163,
+        "pnl": 1386.64
+      },
+      {
+        "file": "results_frictionless/ALL_2024-01-01.txt",
+        "trades": 139,
+        "pnl": -4440.47
+      },
+      {
+        "file": "results_frictionless/ALL_2024-04-01.txt",
+        "trades": 176,
+        "pnl": -2892.61
+      },
+      {
+        "file": "results_frictionless/ALL_2024-07-01.txt",
+        "trades": 189,
+        "pnl": -8891.79
+      },
+      {
+        "file": "results_frictionless/ALL_2024-10-01.txt",
+        "trades": 154,
+        "pnl": -8864.2
+      }
+    ]
+  },
+  "tests": {
+    "application": 83,
+    "harness_unittest": 97,
+    "attacks": 16,
+    "verdict": 32,
+    "report": 19,
+    "spec": 45,
+    "total": 292,
+    "existing_test_result": "all passed; independent defect probes demonstrated failures outside suite coverage"
+  }
+}

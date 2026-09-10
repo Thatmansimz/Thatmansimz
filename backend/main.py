@@ -1,12 +1,14 @@
 import asyncio
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from backend.config import settings
@@ -158,6 +160,10 @@ async def broadcast(data: dict):
 async def lifespan(app: FastAPI):
     global broker, ai_engine, risk_manager, execution_service, scheduler
 
+    # A restart never re-arms this research release, even with a legacy .env.
+    # There is no registered frozen forward run yet.
+    settings.TRADING_ENABLED = False
+
     os.makedirs("data", exist_ok=True)
     init_db()
 
@@ -202,26 +208,6 @@ async def lifespan(app: FastAPI):
     execution_service = ExecutionService(broker, risk_manager, db)
 
     scheduler = TradingScheduler(execution_service, ai_engine, risk_manager)
-    if settings.TRADING_ENABLED:
-        await scheduler.start()
-
-        # Auto-begin the forward-test campaign on first armed boot so the
-        # 60-day clock starts the moment the engine goes live — no manual step
-        # to forget, and the start date never moves after that.
-        from backend.services.forward_test import get_campaign, begin_campaign
-        if get_campaign() is None:
-            try:
-                acct = await broker.get_account()
-                start_equity = float(acct.get("equity", settings.PROP_FIRM_ACCOUNT_SIZE))
-            except Exception:
-                start_equity = settings.PROP_FIRM_ACCOUNT_SIZE
-            begin_campaign(
-                settings.FORWARD_TEST_TARGET_DAYS,
-                settings.STRATEGY,
-                settings.SYMBOLS,
-                start_equity,
-            )
-
     logger.info("AI Trading Platform started | Broker: %s | Prop Firm: %s", settings.BROKER, settings.PROP_FIRM)
 
     yield
@@ -239,10 +225,42 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.API_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def authenticate_mutations(request, call_next):
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        if not settings.API_TOKEN:
+            return JSONResponse(status_code=503, content={"detail": "Mutation access is disabled until API_TOKEN is configured."})
+        supplied = request.headers.get("authorization", "")
+        if not secrets.compare_digest(supplied, f"Bearer {settings.API_TOKEN}"):
+            return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    return await call_next(request)
+
+
+@app.get("/api/workspace")
+async def workspace_status(db: Session = Depends(get_db)):
+    """Current state only; historical assessment numbers are a separate artifact."""
+    from backend.services.readiness import readiness_status
+    closed = db.query(Trade).filter(Trade.status.in_(CLOSED_STATUSES)).all()
+    return {
+        "observed_at": utc_now().isoformat() + "Z",
+        "broker": settings.BROKER,
+        "trading_enabled": settings.TRADING_ENABLED,
+        "scheduler_running": get_scheduler_state()["running"],
+        "strategy": settings.STRATEGY,
+        "symbols": settings.SYMBOLS,
+        "closed_trades": len(closed),
+        "open_positions": db.query(Trade).filter(Trade.status == "open").count(),
+        "recorded_net_pnl": round(sum(t.net_pnl or 0 for t in closed), 2),
+        "reconciliation_issues": broker.reconciliation_issues() if hasattr(broker, "reconciliation_issues") else [],
+        "scope": "All records in this checkout's database; not broker-verified performance.",
+        "readiness": readiness_status(),
+    }
 
 
 CLOSED_STATUSES = ["closed", "stopped_out", "target_hit", "breakeven_stop"]
@@ -936,8 +954,7 @@ async def trade_insights(db: Session = Depends(get_db)):
 @app.get("/api/forward-test/status")
 async def forward_test_status(db: Session = Depends(get_db)):
     """
-    The 60-day live paper campaign: day counter, equity curve, uptime
-    heartbeat, and trade record since the immovable start date.
+    Legacy campaign metadata. Calendar progress is not evidence of validity.
     """
     from backend.services.forward_test import campaign_status
     return campaign_status(db)
@@ -945,20 +962,7 @@ async def forward_test_status(db: Session = Depends(get_db)):
 
 @app.post("/api/forward-test/begin")
 async def forward_test_begin(target_days: int = 0, db: Session = Depends(get_db)):
-    """
-    Manually (re)start the campaign clock. Normally unnecessary — the campaign
-    auto-begins the first time the engine boots armed. Restarting moves the
-    start date, which invalidates the track record, so use deliberately.
-    """
-    from backend.services.forward_test import begin_campaign, campaign_status
-    days = target_days or settings.FORWARD_TEST_TARGET_DAYS
-    try:
-        acct = await broker.get_account() if broker else {}
-        start_equity = float(acct.get("equity", settings.PROP_FIRM_ACCOUNT_SIZE))
-    except Exception:
-        start_equity = settings.PROP_FIRM_ACCOUNT_SIZE
-    begin_campaign(days, settings.STRATEGY, settings.SYMBOLS, start_equity)
-    return campaign_status(db)
+    raise HTTPException(status_code=409, detail="Forward-run creation, replay into the trading ledger and reset are disabled. Register a frozen protocol and preserve research/forward records separately.")
 
 
 def _guard_campaign(force: bool):
@@ -981,47 +985,20 @@ def _guard_campaign(force: bool):
 
 @app.post("/api/forward-test/run")
 async def forward_test_run(period: str = "30d", force: bool = False, db: Session = Depends(get_db)):
-    """
-    Replay the validated ORB edge over recent data and record the results as
-    paper trades, so the Insights panel / charts fill immediately. Stage 1 of
-    the plan — zero money at risk. Requires market-data access on the host.
-    """
-    _guard_campaign(force)
-    try:
-        from scripts.forward_test import run_forward_test
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Forward-test module unavailable: {exc}")
-
-    symbols = [s for s in settings.SYMBOLS if s.upper() in ("MNQ", "NQ", "MES", "ES")] or ["MNQ", "NQ"]
-    try:
-        summary = run_forward_test(
-            db, symbols, period=period,
-            max_stop=settings.MAX_STOP_LOSS_DOLLARS, reset=True,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Forward-test failed: {exc}")
-    return {"ok": True, **summary}
+    raise HTTPException(status_code=409, detail="Forward-run creation, replay into the trading ledger and reset are disabled. Register a frozen protocol and preserve research/forward records separately.")
 
 
 @app.post("/api/forward-test/reset")
 async def forward_test_reset(force: bool = False, db: Session = Depends(get_db)):
-    """Clear paper forward-test trades (leaves any real trades untouched)."""
-    _guard_campaign(force)
-    from scripts.forward_test import reset_forward_trades, rebuild_daily_stats
-    cleared = reset_forward_trades(db)
-    rebuild_daily_stats(db, settings.PROP_FIRM_ACCOUNT_SIZE)
-    return {"ok": True, "cleared": cleared}
+    raise HTTPException(status_code=409, detail="Forward-run creation, replay into the trading ledger and reset are disabled. Register a frozen protocol and preserve research/forward records separately.")
 
 
 # ── Trading Control ───────────────────────────────────────────────────────────
 
 @app.post("/api/trading/start")
 async def start_trading():
-    global scheduler
-    settings.TRADING_ENABLED = True
-    if scheduler and not get_scheduler_state()["running"]:
-        await scheduler.start()
-    return {"trading_enabled": True, "message": "Trading started"}
+    from backend.services.readiness import readiness_status
+    raise HTTPException(status_code=409, detail=readiness_status())
 
 
 @app.post("/api/trading/stop")

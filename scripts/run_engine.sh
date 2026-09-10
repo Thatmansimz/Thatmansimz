@@ -22,7 +22,7 @@ cd "$(dirname "$0")/.."
 
 mkdir -p logs data
 
-HOST="${API_HOST:-0.0.0.0}"
+HOST="${API_HOST:-127.0.0.1}"
 PORT="${API_PORT:-8000}"
 BACKOFF=5
 

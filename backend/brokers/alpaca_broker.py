@@ -55,6 +55,8 @@ class AlpacaBroker(BaseBroker):
         stop_price: float,
         target_price: float,
     ) -> dict:
+        from backend.services.readiness import require_paper_broker
+        require_paper_broker("alpaca")
         if not self._trading_client:
             raise RuntimeError("Alpaca client not connected")
 

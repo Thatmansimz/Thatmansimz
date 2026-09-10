@@ -8,20 +8,23 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "14.1.0",
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.314.0",
+    "next": "15.5.25",
     "react": "^18",
     "react-dom": "^18",
-    "recharts": "^2.10.3",
-    "lucide-react": "^0.314.0",
-    "clsx": "^2.1.0"
+    "recharts": "^2.10.3"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.0.1",
-    "postcss": "^8",
+    "postcss": "8.5.28",
     "tailwindcss": "^3.3.0",
     "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "8.5.28"
   }
 }

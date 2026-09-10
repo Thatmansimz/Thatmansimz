@@ -94,7 +94,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./data/trading.db"
 
     # API
-    API_HOST: str = "0.0.0.0"
+    API_HOST: str = "127.0.0.1"
+    API_TOKEN: str = ""
+    API_ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     API_PORT: int = 8000
     LOG_LEVEL: str = "INFO"
 

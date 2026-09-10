@@ -87,6 +87,8 @@ class TradovateBroker(BaseBroker):
         stop_price: float,
         target_price: float,
     ) -> dict:
+        from backend.services.readiness import require_paper_broker
+        require_paper_broker("tradovate")
         await self._ensure_auth()
 
         action = "Buy" if side == "long" else "Sell"

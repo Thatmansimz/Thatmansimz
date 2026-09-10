@@ -7,6 +7,8 @@ __all__ = ["BaseBroker", "PaperBroker", "AlpacaBroker", "TradovateBroker"]
 
 
 def get_broker(broker_name: str, config) -> BaseBroker:
+    from backend.services.readiness import require_paper_broker
+    require_paper_broker(broker_name)
     name = broker_name.lower()
     if name == "alpaca":
         return AlpacaBroker(config)
