@@ -36,6 +36,14 @@ Open [the local workspace](http://127.0.0.1:3011). The frontend uses a server-si
 
 For a production build, run `npm run build`. The existing Docker image uses Next.js standalone output. To run that output locally, copy `public` and `.next/static` into `.next/standalone` at the same relative paths, then run `HOSTNAME=127.0.0.1 PORT=3011 TAJARI_API_URL=http://127.0.0.1:8011 node .next/standalone/server.js`.
 
+## Hosted partner workspace
+
+The production frontend is deployed to the `tajari` project in the `storm-booked` Vercel team. Deploy from `frontend/`, using the committed `vercel.json` and lockfile. This serves the same evidence workspace as the local app, including the downloadable historical evidence, the test plan, live-pilot requirements and pricing calculator.
+
+The hosted workspace does not contain the Python engine, trading database, broker credentials or licensed price bars. With no `TAJARI_API_URL` configured on Vercel, the monitor explicitly reports that the local engine is not connected. It does not invent a zero P&L or stopped-engine status. All trading protections remain in the canonical backend code; publishing the frontend does not activate or replace a running engine.
+
+For an authorized release, run `npx vercel@59.15.1 deploy --prod --scope storm-booked` from `frontend/` after verification. Check the returned production URL in a clean browser, including the paper-monitor state and source-evidence links. The project currently uses manual deployments, not an automatic Git deployment. Search-engine indexing is disabled; this is a shareable URL, not an access-controlled workspace. The linked Google Doc and Drive evidence retain their existing sharing permissions.
+
 ## Verification
 
 ```bash

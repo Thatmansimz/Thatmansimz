@@ -97,6 +97,7 @@ export default function Workspace() {
   const [section, setSection] = useState<Section>("overview");
   const [runtime, setRuntime] = useState<Runtime | null>(null);
   const [error, setError] = useState("");
+  const [connectionNote, setConnectionNote] = useState("");
   const [loading, setLoading] = useState(true);
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -108,11 +109,18 @@ export default function Workspace() {
       const result = await response.json();
       if (!response.ok)
         throw new Error(result.error || "Engine status unavailable.");
-      setRuntime(result);
+      if (result.connection_status === "not_connected") {
+        setRuntime(null);
+        setConnectionNote(result.message);
+      } else {
+        setRuntime(result);
+        setConnectionNote("");
+      }
       setError("");
     } catch (e) {
       if (signal?.aborted) return;
       setRuntime(null);
+      setConnectionNote("");
       setError(e instanceof Error ? e.message : "Engine status unavailable.");
     } finally {
       if (!signal?.aborted) setLoading(false);
@@ -391,7 +399,7 @@ export default function Workspace() {
                 broker-confirmed performance or validation.
               </PageHeading>
               <div className="section-title">
-                <h2>Connected engine</h2>
+                <h2>Engine connection</h2>
                 <button
                   className="button"
                   disabled={loading}
@@ -404,6 +412,15 @@ export default function Workspace() {
               <div aria-live="polite">
                 {loading ? (
                   <div className="notice">Checking the connected backend…</div>
+                ) : connectionNote ? (
+                  <div className="notice">
+                    <Radio size={20} />
+                    <p>
+                      <strong>Local engine not connected</strong>
+                      <br />
+                      {connectionNote}
+                    </p>
+                  </div>
                 ) : error ? (
                   <div className="notice amber">
                     <Radio size={20} />
@@ -481,7 +498,7 @@ export default function Workspace() {
                   </p>
                   <p>
                     The legacy engine may be running in a different checkout.
-                    Its status is not inferred from this preview.
+                    Its status is not inferred from this workspace.
                   </p>
                   <button
                     className="text-button"

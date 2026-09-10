@@ -8,6 +8,12 @@ const BACKEND_URL = process.env.TAJARI_API_URL || "http://127.0.0.1:8000";
  * Returns system health, market status, and AI configuration.
  */
 export async function GET() {
+  if (process.env.VERCEL && !process.env.TAJARI_API_URL) {
+    return NextResponse.json(
+      { connection_status: "not_connected" },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
   try {
     const res = await fetch(`${BACKEND_URL}/api/status`, {
       cache: "no-store",

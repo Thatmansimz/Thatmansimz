@@ -61,3 +61,7 @@ logs/
 data/paper_state.json
 data/forward_test.json
 backups/
+
+# Hosting metadata and generated compiler cache
+.vercel/
+*.tsbuildinfo

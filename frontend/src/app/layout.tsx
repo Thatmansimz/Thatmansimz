@@ -4,6 +4,7 @@ export const metadata: Metadata = {
   title: "Tajari · Evidence workspace",
   description:
     "Research evidence, technical evaluation and trading readiness for Tajari.",
+  robots: { index: false, follow: false },
 };
 export default function RootLayout({
   children,
