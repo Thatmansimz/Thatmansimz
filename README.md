@@ -59,6 +59,10 @@ The test runner changes into a temporary directory before discovery and forces p
 
 ## Evidence and next milestones
 
+The [September 11 paper milestone](docs/PAPER_MILESTONE_2026-09-11.md) is now an internal example evaluation: 10 registered scenarios reconcile across separate worker/simulator ledgers, including actual process crashes and restart. The isolated `backend/paperlab` core uses an existing paid MNQ research slice and a simulated $50,000 balance. It has no external broker or network order route. The public paper view shows its dated results separately from engine connection status. All 113 isolated backend tests pass; this does not establish profitability or fulfill the six live-pilot requirements.
+
+The [$1,500 pilot package](docs/EVALUATION_PILOT.md) and [buyer tracker](evidence/evaluation-pilot-tracker.csv) are ready for customer discovery. No customer contact, payment or validation is implied by the internal example. Raw market bars and private run databases remain outside the repository and deployment.
+
 The original evidence files in `frontend/public/evidence` preserve the assessment of application base `9808b0e`; new synthetic repair results live in `docs/repair-probes-2026-09-10.json`. Repairs do not rewrite historical results or certify a strategy.
 
 The next commercial milestone is two independent paying customers for a defined evaluation, proposed at $1,500. This is a pricing hypothesis. The next research milestone is a frozen specification and a reproducible case study with honest uncertainty, costs and provenance. Critical Nullius integrity work, a completed broker adapter, realistic execution validation and all six live gates remain outstanding.

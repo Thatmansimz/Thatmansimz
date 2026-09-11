@@ -180,6 +180,12 @@ This master document is the working plan. Keep each evidence release immutable, 
 
 The shared native document is [Tajari — Master Plan, Pricing & Evidence](https://docs.google.com/document/d/1lgEJ4ND83JNOWouX8QoYAcEl_BB4NahogO3FElErMsY/edit). Taj has commenter access and read access to the original evidence artifacts.
 
+### Internal paper milestone — September 11, 2026
+
+The new isolated execution core reconciles all ten predeclared engineering cases on 315 already-observed MNQ minutes from January 3–7, 2022. Starting simulated balance: $50,000. Baseline: five completed round trips, $20.80 net after declared simulation assumptions. Worse costs: $5.60 net. Both actual process-crash cases restart with identical baseline accounting. These are engineering results, not a validated trading edge or a broker-connected forward run. No new data was purchased and no new holdout was opened. All six live-pilot requirements remain unverified.
+
+Read the [full internal evaluation](https://tajari.vercel.app/evidence/paper-milestone-report.md), [aggregate results](https://tajari.vercel.app/evidence/paper-milestone-summary.json), and [proposed $1,500 pilot package](https://tajari.vercel.app/evidence/evaluation-pilot.md). The scope, intake, delivery criteria, buyer interview and empty tracker are prepared. No outreach, revenue or paid demand is claimed. Full licensed input and private ledgers remain local; the public workspace contains summaries only. The next trading step is an entitled streaming feed and complete paper-broker adapter with actual contract mapping, followed by a separate registered real-time run.
+
 ### Production workspace — September 10, 2026
 
 The approved layout is live at **[tajari.vercel.app](https://tajari.vercel.app)**. Share this stable link with Taj; it does not require Vercel login or the local computer to remain online. Frontend release `138b0e7` is deployed to Vercel project `tajari`. The hosted workspace includes historical evidence, the test plan, the six live-pilot requirements and pricing tools. Its paper monitor explicitly reports that the local engine is not connected. No broker, account database or trading control was published. All six live-pilot gates remain unverified. The existing local paper engine was not replaced. The workspace is accessible to anyone with the URL; Google Doc and Drive permissions are unchanged.

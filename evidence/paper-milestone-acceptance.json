@@ -1,0 +1,16 @@
+{
+  "status": "pass",
+  "checks": [
+    "A complete baseline cycle exists; all ten independent reconciliations pass",
+    "crash_after_accept: real process exit 87, successful restart, baseline accounting retained",
+    "crash_after_fill: real process exit 87, successful restart, baseline accounting retained",
+    "Transport disconnect observed; missed market events explicitly recorded",
+    "entry_rejected: rejection recorded, no inventory or money change",
+    "protection_rejected: rejection recorded, no inventory or money change",
+    "Partial fill lifecycle actually occurred and reconciled",
+    "Worse-cost scenario charges higher fees under its frozen overrides",
+    "Longer latency configured and independently verified against every fill",
+    "Missing opening event suppresses an entry; improved P&L is not called improved strategy"
+  ],
+  "scope": "Engineering milestone only; no profitability, broker or live-readiness certification"
+}

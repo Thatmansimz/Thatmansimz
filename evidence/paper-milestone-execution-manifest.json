@@ -1,0 +1,13 @@
+{
+  "captured_before_execution_at": "2026-09-11T16:38:00.671699+00:00",
+  "code_sha256": {
+    "backend/paperlab/__init__.py": "717ca54ede88bc58bf0c47bd21a155e4d0235f5de1346f5d9d2f5bc79d1ca676",
+    "backend/paperlab/audit.py": "9a8e9e1a5c4dc36326ca8f84b506e549103de39e923e3ea65a047fc8e1d8e277",
+    "backend/paperlab/simulator.py": "676c1f577a6c160bc591ba8de4773c700223fbf48a62de333383665e45d2d88a",
+    "backend/paperlab/storage.py": "2080f8b87680133661ca532e06418fbf09db93ef3b08d4d2a79c42e4cfb58ce4",
+    "backend/paperlab/worker.py": "ce24ee600eaced8f1085ee7d645465b470503c39e46ced6d82d8df45ac440085",
+    "scripts/paper_milestone.py": "897254b9efb627bed27c958567f400afd0899fdf5ebe439722e5bbb82b762832"
+  },
+  "git_head": "80fc0117612631b1b5bb666abdbd6c88aa6d4b06",
+  "custody": "Local file hashes and Git history; not independent attestation"
+}

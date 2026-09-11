@@ -1,0 +1,403 @@
+{
+  "protocol": "opening-impulse-engineering-v1",
+  "purpose": "engineering_replay_only",
+  "generated_at": "2026-09-11T16:38:02.172776+00:00",
+  "data_access": {
+    "accessed_at": "2026-09-11T16:36:07.278652+00:00",
+    "dataset_file": "mnq_1m.parquet",
+    "dataset_sha256": "fe416a569cde0cadb4660a85b17cc7a68558183878908c9fdfee268c1f2d2043",
+    "protocol_sha256": "08777142ef7642e27bc25cbd6421387f4078d6a9dce53e717b157b2761f12b80",
+    "data_status": "previously_observed_research",
+    "requested_start": "2022-01-03",
+    "requested_end_exclusive": "2022-01-08",
+    "purpose": "engineering_replay_only",
+    "status": "research_slice_prepared",
+    "raw_data_published": false,
+    "selected_bars": 315,
+    "selected_bars_sha256": "c77194a7bab137849800ebb7deb368dfa20506f1d94dffa268f5a47b15fc95f6",
+    "first_ts": 1641220200,
+    "last_ts": 1641569520
+  },
+  "implementation": {
+    "captured_before_execution_at": "2026-09-11T16:38:00.671699+00:00",
+    "code_sha256": {
+      "backend/paperlab/__init__.py": "717ca54ede88bc58bf0c47bd21a155e4d0235f5de1346f5d9d2f5bc79d1ca676",
+      "backend/paperlab/audit.py": "9a8e9e1a5c4dc36326ca8f84b506e549103de39e923e3ea65a047fc8e1d8e277",
+      "backend/paperlab/simulator.py": "676c1f577a6c160bc591ba8de4773c700223fbf48a62de333383665e45d2d88a",
+      "backend/paperlab/storage.py": "2080f8b87680133661ca532e06418fbf09db93ef3b08d4d2a79c42e4cfb58ce4",
+      "backend/paperlab/worker.py": "ce24ee600eaced8f1085ee7d645465b470503c39e46ced6d82d8df45ac440085",
+      "scripts/paper_milestone.py": "897254b9efb627bed27c958567f400afd0899fdf5ebe439722e5bbb82b762832"
+    },
+    "git_head": "80fc0117612631b1b5bb666abdbd6c88aa6d4b06",
+    "custody": "Local file hashes and Git history; not independent attestation"
+  },
+  "initial_balance_cents": 5000000,
+  "scenarios": [
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 2700,
+        "fees_cents": 620,
+        "net_pnl_cents": 2080,
+        "equity_cents": 5002080
+      },
+      "orders": 6,
+      "fills": 10,
+      "completed_contract_units": 5,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "0ff694879db0f7db276356eca38d0149eb499752a720246bfcdc5bb12c94e9b9",
+        "worker": "0bf2554de1a90b4efe181930f47e75ead82462e286e949dea7fcdf8d36857abb"
+      },
+      "protocol_sha256": "ceeee9ae3f581dc1a67ff893c02d1e57ceaaae40028141726659956eb48b305b",
+      "worker_events": {
+        "fill_observed": 10,
+        "intent_committed": 6,
+        "market_observed": 315,
+        "order_acknowledged": 6,
+        "order_observed": 6,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "baseline",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 2700,
+        "fees_cents": 620,
+        "net_pnl_cents": 2080,
+        "equity_cents": 5002080
+      },
+      "orders": 6,
+      "fills": 10,
+      "completed_contract_units": 5,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "0ff694879db0f7db276356eca38d0149eb499752a720246bfcdc5bb12c94e9b9",
+        "worker": "31ce2f6311c1ff704ff9ed34baf64c8c7182180d1f64b53e7c58af07163e4bdb"
+      },
+      "protocol_sha256": "bf2fc7d149784b8699e14c4d3260f374cf460ad126d8049de10ce395e09142f9",
+      "worker_events": {
+        "fill_observed": 10,
+        "intent_committed": 6,
+        "market_observed": 315,
+        "order_acknowledged": 5,
+        "order_observed": 7,
+        "recovery_completed": 2
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "crash_after_accept",
+      "process_exit_codes": [
+        87,
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 2700,
+        "fees_cents": 620,
+        "net_pnl_cents": 2080,
+        "equity_cents": 5002080
+      },
+      "orders": 6,
+      "fills": 10,
+      "completed_contract_units": 5,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "0ff694879db0f7db276356eca38d0149eb499752a720246bfcdc5bb12c94e9b9",
+        "worker": "e9839201180cc1193da825a0378212401a308ebaf1ce23d791c32e16ce55fdef"
+      },
+      "protocol_sha256": "498d6f80089744e47e0b985206846f3048e6c431e6ec0cfd30f0358c341dc838",
+      "worker_events": {
+        "fill_observed": 10,
+        "intent_committed": 6,
+        "market_observed": 315,
+        "order_acknowledged": 6,
+        "order_observed": 6,
+        "recovery_completed": 2
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "crash_after_fill",
+      "process_exit_codes": [
+        87,
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 2700,
+        "fees_cents": 620,
+        "net_pnl_cents": 2080,
+        "equity_cents": 5002080
+      },
+      "orders": 6,
+      "fills": 10,
+      "completed_contract_units": 5,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "0ff694879db0f7db276356eca38d0149eb499752a720246bfcdc5bb12c94e9b9",
+        "worker": "00134ba823c22d1926bf2e866eda25e24485753107271a62a22151b9a17a78d5"
+      },
+      "protocol_sha256": "987aaf853a8f1b88b7be22b43df38b311cdcaaeb3dad94f2331412c8e048d6bf",
+      "worker_events": {
+        "fill_observed": 10,
+        "intent_committed": 6,
+        "market_gap": 1,
+        "market_observed": 312,
+        "order_acknowledged": 6,
+        "order_observed": 6,
+        "recovery_completed": 1,
+        "transport_disconnected": 3
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "disconnect",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 0,
+        "fees_cents": 0,
+        "net_pnl_cents": 0,
+        "equity_cents": 5000000
+      },
+      "orders": 5,
+      "fills": 0,
+      "completed_contract_units": 0,
+      "maximum_position": 0,
+      "journal_roots": {
+        "simulator": "834e26f56484562138a29ac1e671999569d424bcb1f81084ea35a1824d0e59db",
+        "worker": "9f1becf15964f3a6f1e2d827a0cf47ea8c37eeb371ef67e74bd8114eec1fe9a4"
+      },
+      "protocol_sha256": "05de91dfccd7c76a09fcbe3bf18b187aa2c64e6a936807c7d4dc97aae41a3e66",
+      "worker_events": {
+        "intent_committed": 5,
+        "market_observed": 315,
+        "order_acknowledged": 5,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "rejected": 5
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "entry_rejected",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 0,
+        "fees_cents": 0,
+        "net_pnl_cents": 0,
+        "equity_cents": 5000000
+      },
+      "orders": 5,
+      "fills": 0,
+      "completed_contract_units": 0,
+      "maximum_position": 0,
+      "journal_roots": {
+        "simulator": "c16c560ca5b57d1f75a019177eddc1b4a78f6a110757054545e4f7457b3579f3",
+        "worker": "9f1becf15964f3a6f1e2d827a0cf47ea8c37eeb371ef67e74bd8114eec1fe9a4"
+      },
+      "protocol_sha256": "f8db4d52c3783208900b1eea647a1c068896c67a36d4205890018c8ef28843f8",
+      "worker_events": {
+        "intent_committed": 5,
+        "market_observed": 315,
+        "order_acknowledged": 5,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "rejected": 5
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "protection_rejected",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 6250,
+        "fees_cents": 1240,
+        "net_pnl_cents": 5010,
+        "equity_cents": 5005010
+      },
+      "orders": 6,
+      "fills": 20,
+      "completed_contract_units": 10,
+      "maximum_position": 2,
+      "journal_roots": {
+        "simulator": "3f52dca7e32b71b6c11d3adf997d62b0c71153d9a8642fe6482d9870544bccf5",
+        "worker": "06801848126772d9a458280527fbd7d4197522736b7714dd6267298fce6ecf91"
+      },
+      "protocol_sha256": "6ac3452e811c71a67e98dc6959f230ba235b9649a3f0d76ccd7e6a7b4069894d",
+      "worker_events": {
+        "fill_observed": 20,
+        "intent_committed": 6,
+        "market_observed": 315,
+        "order_acknowledged": 6,
+        "order_observed": 12,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "partial_fills",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 1800,
+        "fees_cents": 1240,
+        "net_pnl_cents": 560,
+        "equity_cents": 5000560
+      },
+      "orders": 6,
+      "fills": 10,
+      "completed_contract_units": 5,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "0eb77c2f2e3102922bfe710e6cc9d82ca797a4dff48427ee55ede4c28d0c8108",
+        "worker": "ac3263ddb3dc613e94f1c41c3120a1aa36ceafd48106e9afed82f5f608b64b26"
+      },
+      "protocol_sha256": "cefd5f5ac1af1f73763e469fd2b6cff3e33543a31c17c653750a3ec1ba67b902",
+      "worker_events": {
+        "fill_observed": 10,
+        "intent_committed": 6,
+        "market_observed": 315,
+        "order_acknowledged": 6,
+        "order_observed": 6,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "worse_costs",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 6450,
+        "fees_cents": 620,
+        "net_pnl_cents": 5830,
+        "equity_cents": 5005830
+      },
+      "orders": 6,
+      "fills": 10,
+      "completed_contract_units": 5,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "c5fcb26431e28ada447f7f51b40d44747145876bf9326dd41eadb7ac7ced0126",
+        "worker": "02b7bf8dcd8113b7218b8344be14b7a5f7f3e0e4bbd90d672430da0f232fe1e3"
+      },
+      "protocol_sha256": "098f1860391aa9dd2c6fa20f54162ba083f757f4c0c7cf20da8393f5832846c1",
+      "worker_events": {
+        "fill_observed": 10,
+        "intent_committed": 6,
+        "market_observed": 315,
+        "order_acknowledged": 6,
+        "order_observed": 6,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "filled": 6
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "longer_latency",
+      "process_exit_codes": [
+        0
+      ]
+    },
+    {
+      "status": "pass",
+      "errors": [],
+      "account": {
+        "position": 0,
+        "gross_pnl_cents": 6750,
+        "fees_cents": 496,
+        "net_pnl_cents": 6254,
+        "equity_cents": 5006254
+      },
+      "orders": 5,
+      "fills": 8,
+      "completed_contract_units": 4,
+      "maximum_position": 1,
+      "journal_roots": {
+        "simulator": "8c2a2be4b32b7e415db6ed73b38cb2b4205e5f6290925a305386c2b58953963e",
+        "worker": "03c1394a07edbea289602c3c6a987aa5501da678fd019f5ebb9dc1d806f5843d"
+      },
+      "protocol_sha256": "9bdf46cdc4a2686d09bf5232ec4763d2330a11d4ad0167532dc6513059279e0b",
+      "worker_events": {
+        "fill_observed": 8,
+        "intent_committed": 5,
+        "market_gap": 1,
+        "market_observed": 314,
+        "order_acknowledged": 5,
+        "order_observed": 5,
+        "recovery_completed": 1
+      },
+      "order_states": {
+        "filled": 5
+      },
+      "scope": "Internal simulator reconciliation only; not independent broker confirmation or strategy validation",
+      "case": "missing_market_event",
+      "process_exit_codes": [
+        0
+      ]
+    }
+  ],
+  "status": "pass",
+  "broker_connected": false,
+  "live_trading_available": false,
+  "profitability_established": false,
+  "limits": "Fees are declared test assumptions, not a broker quote. Source export lacks individual contract mapping and quotes. This lab cannot route to an external broker and cannot certify execution realism, live readiness or profitability. A separate registered forward run, approved streaming data access and complete broker adapter remain required."
+}
