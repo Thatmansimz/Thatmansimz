@@ -1,0 +1,26 @@
+[
+  {
+    "file": "mnq_1m.parquet",
+    "bytes": 28816238,
+    "sha256": "fe416a569cde0cadb4660a85b17cc7a68558183878908c9fdfee268c1f2d2043",
+    "rows": 1628841,
+    "row_groups": 2,
+    "schema": "open: double\nhigh: double\nlow: double\nclose: double\nvolume: uint64\ntimestamp: timestamp[ns, tz=UTC]\n-- schema metadata --\npandas: '{\"index_columns\": [\"timestamp\"], \"column_indexes\": [{\"name\": nul' + 911"
+  },
+  {
+    "file": "mnq_5m.parquet",
+    "bytes": 6992330,
+    "sha256": "898f6bbac3a2bf8ae09248957a4d05b1297510ab030dfab802be567e0f0e7cc8",
+    "rows": 325770,
+    "row_groups": 1,
+    "schema": "open: double\nhigh: double\nlow: double\nclose: double\nvolume: uint64\ntimestamp: timestamp[ns, tz=UTC]\n-- schema metadata --\npandas: '{\"index_columns\": [\"timestamp\"], \"column_indexes\": [{\"name\": nul' + 911"
+  },
+  {
+    "file": "data/nq_pre2022_1m.parquet",
+    "bytes": 17633741,
+    "sha256": "2d3912cbfcb51a5bb0e0c0c3a6fe7fea4fbc04206891e6fe0322e8b6a394debc",
+    "rows": 1052911,
+    "row_groups": 2,
+    "schema": "open: double\nhigh: double\nlow: double\nclose: double\nvolume: uint64\nts_event: timestamp[ns, tz=UTC]\n-- schema metadata --\npandas: '{\"index_columns\": [\"ts_event\"], \"column_indexes\": [{\"name\": null' + 908"
+  }
+]

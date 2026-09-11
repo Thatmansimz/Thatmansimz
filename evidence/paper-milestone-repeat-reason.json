@@ -1,0 +1,6 @@
+{
+  "reason": "Reproduce the unchanged registered scenarios after adding pre-execution implementation fingerprints and four synthetic acceptance tests. No strategy or execution-rule changes. First attempt preserved.",
+  "previous_attempt": "2026-09-11-first-milestone",
+  "previous_result": "10/10 internal reconciliation scenarios passed",
+  "new_price_data_accessed": false
+}

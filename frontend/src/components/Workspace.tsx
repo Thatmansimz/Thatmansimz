@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import PaperMilestone from "./PaperMilestone";
 import {
   ArrowUpRight,
   ArrowRight,
@@ -398,6 +399,7 @@ export default function Workspace() {
                 Watch the connected engine without confusing simulated P&L with
                 broker-confirmed performance or validation.
               </PageHeading>
+              <PaperMilestone />
               <div className="section-title">
                 <h2>Engine connection</h2>
                 <button
@@ -809,6 +811,34 @@ function Service() {
           </strong>
           <p>{margin} contribution margin</p>
           <small>Price − delivery hours × labor cost − variable tooling</small>
+        </div>
+      </section>
+      <section className="panel lower-grid">
+        <p className="eyebrow">READY FOR BUYER TESTING</p>
+        <h3>The first example evaluation is complete.</h3>
+        <p>
+          Tajari’s internal paper-engine case provides a reproducible sample
+          report. The proposed $1,500 pilot now has a defined scope, intake
+          checklist, delivery criteria and interview guide. This is preparation
+          for the buyer test; paid demand has not been established.
+        </p>
+        <div className="hero-actions">
+          <a
+            className="button"
+            href="/evidence/evaluation-pilot.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open the pilot package <ArrowUpRight size={15} />
+          </a>
+          <a
+            className="text-button"
+            href="/evidence/paper-milestone-report.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Read the sample evaluation <ArrowUpRight size={15} />
+          </a>
         </div>
       </section>
       <div className="two-column lower-grid">

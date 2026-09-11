@@ -1,0 +1,16 @@
+{
+  "accessed_at": "2026-09-11T16:36:07.278652+00:00",
+  "dataset_file": "mnq_1m.parquet",
+  "dataset_sha256": "fe416a569cde0cadb4660a85b17cc7a68558183878908c9fdfee268c1f2d2043",
+  "protocol_sha256": "08777142ef7642e27bc25cbd6421387f4078d6a9dce53e717b157b2761f12b80",
+  "data_status": "previously_observed_research",
+  "requested_start": "2022-01-03",
+  "requested_end_exclusive": "2022-01-08",
+  "purpose": "engineering_replay_only",
+  "status": "research_slice_prepared",
+  "raw_data_published": false,
+  "selected_bars": 315,
+  "selected_bars_sha256": "c77194a7bab137849800ebb7deb368dfa20506f1d94dffa268f5a47b15fc95f6",
+  "first_ts": 1641220200,
+  "last_ts": 1641569520
+}
