@@ -55,6 +55,11 @@ export function parsePaperStatus(value: unknown): PaperStatus {
       throw new Error("Invalid numeric field");
     return x;
   };
+  const count = (x: unknown): number => {
+    const n = num(x);
+    if (n < 0) throw new Error("Invalid count");
+    return n;
+  };
   const stamp = (x: unknown): string => {
     const s = str(x);
     if (!Number.isFinite(Date.parse(s))) throw new Error("Invalid timestamp");
@@ -73,8 +78,8 @@ export function parsePaperStatus(value: unknown): PaperStatus {
     return { name: row.name as PaperScenario["name"], account: {
       position: num(a.position), gross_pnl_cents: num(a.gross_pnl_cents), fees_cents: num(a.fees_cents),
       net_pnl_cents: num(a.net_pnl_cents), equity_cents: num(a.equity_cents),
-    }, orders: num(row.orders), fills: num(row.fills), completed_contract_units: num(row.completed_contract_units),
-    halted_days: num(row.halted_days), risk_halted: row.risk_halted,
+    }, orders: count(row.orders), fills: count(row.fills), completed_contract_units: count(row.completed_contract_units),
+    halted_days: count(row.halted_days), risk_halted: row.risk_halted,
     reconciliation: row.reconciliation as PaperScenario["reconciliation"] };
   });
   if (new Set(scenarios.map(s => s.name)).size !== 2) throw new Error("Duplicate scenarios");
@@ -86,8 +91,8 @@ export function parsePaperStatus(value: unknown): PaperStatus {
     last_reconciled_at: optionalStamp(v.last_reconciled_at),
     last_audit_attempt_at: v.last_audit_attempt_at == null ? null : stamp(v.last_audit_attempt_at),
     contract: v.contract ? { symbol: str((v.contract as Record<string, unknown>).symbol, /^MNQ[HMUZ][0-9]{1,2}$/) } : null,
-    receipts: num(v.receipts), excluded_receipts: num(v.excluded_receipts), complete_opening_opportunities: num(v.complete_opening_opportunities),
-    observed_opening_dates: num(v.observed_opening_dates), engineering_review_due: v.engineering_review_due === true,
+    receipts: count(v.receipts), excluded_receipts: count(v.excluded_receipts), complete_opening_opportunities: count(v.complete_opening_opportunities),
+    observed_opening_dates: count(v.observed_opening_dates), engineering_review_due: v.engineering_review_due === true,
     scenarios, external_broker_connected: false, live_order_routing: false, profitability_established: false,
     initial_balance_cents: num(v.initial_balance_cents),
   };

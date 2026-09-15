@@ -1,0 +1,10 @@
+[Unit]
+Description=Tajari coherent paper-ledger backup to private Cloud Storage
+RequiresMountsFor=/var/lib/tajari
+ConditionPathExists=/etc/tajari/backup.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/tajari/operations/maintenance-backup.py
+UMask=0077
+TimeoutStartSec=5min

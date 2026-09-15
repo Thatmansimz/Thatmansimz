@@ -22,6 +22,22 @@ if redis.call('EXISTS', KEYS[1]) == 1 then
   if tonumber(ARGV[1]) == tonumber(old[1]) then
     if old[2] == ARGV[2] then return 2 else return 0 end
   end
+  local old_ok, previous = pcall(cjson.decode, old[2])
+  local new_ok, incoming = pcall(cjson.decode, ARGV[2])
+  if not old_ok or not new_ok or type(previous) ~= 'table' or type(incoming) ~= 'table' then return -1 end
+  if type(previous.receipts) ~= 'number' or incoming.receipts < previous.receipts then return -1 end
+  if type(previous.scenarios) ~= 'table' or #previous.scenarios ~= 2 then return -1 end
+  for _, before in ipairs(previous.scenarios) do
+    local matched = false
+    for _, after in ipairs(incoming.scenarios) do
+      if before.name == after.name then
+        matched = true
+        if type(before.orders) ~= 'number' or type(before.fills) ~= 'number'
+          or after.orders < before.orders or after.fills < before.fills then return -1 end
+      end
+    end
+    if not matched then return -1 end
+  end
 end
 redis.call('HSET', KEYS[1], 'observed_ms', ARGV[1], 'status', ARGV[2], 'protocol_sha256', ARGV[3], 'registered_at', ARGV[4])
 return 1
@@ -152,6 +168,31 @@ export async function getPaperServiceStatus(deps: Dependencies = {}) {
   } catch {
     return unavailable();
   }
+}
+
+// External monitors must check fresh worker evidence, not just whether the
+// website returns HTTP 200. This is operational health, never a trading gate.
+export async function getPaperServiceHealth(deps: Dependencies = {}) {
+  const response = await getPaperServiceStatus(deps);
+  const body = await response.json();
+  const now = (deps.now ?? Date.now)();
+  const reasons: string[] = [];
+  if (!response.ok || !body.status) return json({ ok: false, reasons: ["report_unavailable"] }, 503);
+  const status = body.status as PaperStatus;
+  if (body.stale) reasons.push("stale_report");
+  if (status.hard_halt || ["stopped", "halted"].includes(status.connection)) reasons.push("worker_halted");
+  if (status.scenarios.some(s => s.reconciliation !== "pass")) reasons.push("reconciliation_not_passed");
+  if (status.scenarios.some(s => s.risk_halted)) reasons.push("risk_halted");
+  for (const timestamp of [status.last_reconciled_at, status.last_audit_attempt_at]) {
+    if (!timestamp || now - Date.parse(timestamp) > 150_000 || Date.parse(timestamp) - now > 15_000) {
+      reasons.push("audit_not_current"); break;
+    }
+  }
+  // A quiet/closed market can legitimately have no bars. Report feed state
+  // separately; this endpoint does not certify market-data continuity.
+  return json({ ok: reasons.length === 0, reasons, run_id: status.run_id,
+    observed_at: status.observed_at, feed_state: status.connection,
+    scope: "Worker reporting and reconciliation only; not feed continuity or profitability." }, reasons.length ? 503 : 200);
 }
 
 export async function postPaperServiceStatus(request: Request, deps: Dependencies = {}) {
