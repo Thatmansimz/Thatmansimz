@@ -18,7 +18,7 @@ for (const name of ['paper-status', 'paper-relay']) {
   const output = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } });
   fs.writeFileSync(path.join(compiled, name + '.js'), output.outputText);
 }
-const { getPaperServiceStatus: get, postPaperServiceStatus: post } = require(path.join(compiled, 'paper-relay.js'));
+const { getPaperServiceStatus: get, postPaperServiceStatus: post, getPaperServiceHealth: health } = require(path.join(compiled, 'paper-relay.js'));
 after(() => fs.rmSync(compiled, { recursive: true, force: true }));
 
 const now = Date.parse('2026-09-15T15:00:00.000Z');
@@ -97,6 +97,7 @@ test('rejects other runs, live mode, stale and future timestamps without storage
   const settings = deps(async () => { calls++; throw new Error('must not run'); });
   for (const [changes, expected] of [
     [{ run_id: 'old-run' }, 409], [{ live_order_routing: true }, 400],
+    [{ receipts: -1 }, 400],
     [{ observed_at: new Date(now - 150001).toISOString() }, 422],
     [{ observed_at: new Date(now + 15001).toISOString() }, 422],
   ]) assert.equal((await post(request(report(changes)), settings)).status, expected);
@@ -151,6 +152,34 @@ test('read validates stored identity, strips unknown fields and reports stalenes
   for (const value of corrupt) assert.equal((await get(deps(async () => Response.json({ result: value })))).status, 503);
   const empty = await get(deps(async () => Response.json({ result: [null, null, null, null] })));
   assert.equal((await empty.json()).connection_status, 'not_connected');
+});
+
+test('external health fails on stale, halted or unaudited evidence, not a closed-market feed alone', async () => {
+  const check = value => health(deps(async () => Response.json({ result: stored(value) })));
+  for (const connection of ['streaming', 'disconnected', 'connecting', 'connected_waiting_for_bar', 'data_review']) {
+    const r = await check(report({ connection }));
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.feed_state, connection);
+    assert.equal(body.scenarios, undefined);
+  }
+  for (const changes of [
+    { observed_at: new Date(now - 150001).toISOString() },
+    { observed_at: new Date(now + 15001).toISOString() },
+    { hard_halt: 'reconciliation_failure' }, { connection: 'stopped' },
+    { last_reconciled_at: null }, { last_audit_attempt_at: null },
+    { last_reconciled_at: new Date(now - 150001).toISOString() },
+    { last_audit_attempt_at: new Date(now + 15001).toISOString() },
+    { scenarios: report().scenarios.map(s => ({ ...s, reconciliation: 'fail' })) },
+    { scenarios: report().scenarios.map(s => ({ ...s, risk_halted: true })) },
+  ]) {
+    const r = await check(report(changes));
+    assert.equal(r.status, 503);
+    assert.equal((await r.json()).ok, false);
+  }
+  assert.equal((await health(deps(async () => Response.json({ result: [null, null, null, null] })))).status, 503);
+  assert.equal((await health(deps(async () => { throw new Error('private error'); }))).status, 503);
 });
 
 test('missing configuration stays unavailable; local fallback and Marketplace names work', async () => {
@@ -224,6 +253,17 @@ test('actual Redis Lua keeps the latest concurrent report and rejects changed id
   assert.equal((await post(request(report({ registered_at: '2026-09-15T13:00:00Z', observed_at: new Date(now + 1).toISOString() })), settings)).status, 409);
   const changedAtSameTime = report({ receipts: 100 });
   assert.equal((await post(request(changedAtSameTime), settings)).status, 409);
+  // A backup rollback is still older evidence when it has a new wall-clock
+  // timestamp. Protect the external high-water record across VM migrations.
+  const high = report({ observed_at: new Date(now + 100).toISOString(), receipts: 10,
+    scenarios: report().scenarios.map(s => ({ ...s, orders: 4, fills: 3 })) });
+  assert.equal((await post(request(high), settings)).status, 200);
+  for (const lower of [
+    { ...high, receipts: 9 },
+    { ...high, scenarios: high.scenarios.map(s => ({ ...s, orders: 3 })) },
+    { ...high, scenarios: high.scenarios.map(s => ({ ...s, fills: 2 })) },
+  ]) assert.equal((await post(request({ ...lower, observed_at: new Date(now + 101).toISOString() }), settings)).status, 409);
+  assert.equal((await (await get(settings)).json()).status.receipts, 10);
   assert.equal(await execute(['TTL', 'tajari:paper-status:v1:synthetic-run']), -1);
   await execute(['HSET', 'tajari:paper-status:v1:synthetic-run', 'observed_ms', 'corrupt']);
   assert.equal((await get(settings)).status, 503);

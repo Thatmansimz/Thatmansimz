@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up only after the session, before New York midnight
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 17:15:00 America/New_York
+Persistent=false
+RandomizedDelaySec=30
+Unit=tajari-backup.service
+
+[Install]
+WantedBy=timers.target
