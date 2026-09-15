@@ -90,6 +90,47 @@ def register(directory, spec, *, now_ns=None, implementation=None, preflight=Non
     return manifest
 
 
+def verify_registration_lineage(directory, registration, db):
+    """Reject a partial code amendment before recovering any trading ledger.
+
+    An amendment spans a journal commit and an atomic manifest replacement. A
+    crash between them is ambiguous: neither old nor new code may resume until
+    an operator reconciles that evidence. Archived manifests also bind every
+    code revision back to the unchanged original registration and data freeze.
+    """
+    amendments = registration.get("implementation_amendments", [])
+    journal = [json.loads(row[0]) for row in db.execute(
+        "SELECT payload FROM journal WHERE kind='implementation_amended' ORDER BY seq")]
+    if not isinstance(amendments, list) or amendments != journal:
+        raise ValueError("Registration amendment journal/manifest mismatch; operator review required")
+    current = registration
+    for index in range(len(amendments)-1, -1, -1):
+        amendment = amendments[index]
+        if not isinstance(amendment, dict):
+            raise ValueError("Invalid registration amendment; operator review required")
+        seal = amendment.get("previous_registration_sha256", "")
+        name = amendment.get("previous_registration")
+        if not isinstance(seal, str) or not re.fullmatch(r"[0-9a-f]{64}", seal) or name != f"registration-{seal}.json":
+            raise ValueError("Invalid registration archive reference; operator review required")
+        try:
+            archived = (Path(directory)/name).read_bytes()
+        except OSError as exc:
+            raise ValueError("Registration archive is missing or unreadable; operator review required") from exc
+        if hashlib.sha256(archived).hexdigest() != seal:
+            raise ValueError("Registration archive hash mismatch; operator review required")
+        try:
+            previous = json.loads(archived)
+        except (ValueError, UnicodeError) as exc:
+            raise ValueError("Invalid registration archive; operator review required") from exc
+        if not isinstance(previous, dict) or previous.get("implementation_amendments", []) != amendments[:index]:
+            raise ValueError("Registration archive lineage mismatch; operator review required")
+        expected = dict(previous, code_sha256=amendment.get("code_sha256"),
+                        runtime=amendment.get("runtime"), implementation_amendments=amendments[:index+1])
+        if current != expected:
+            raise ValueError("Registration amendment changed the original freeze or implementation linkage; operator review required")
+        current = previous
+
+
 class ForwardWorker(Worker):
     def _intent(self, day, kind, side, qty, bar):
         key = f"{day}/{kind}"
@@ -137,7 +178,13 @@ class ContinuousPaper:
           CREATE TABLE IF NOT EXISTS daily_audits(day TEXT PRIMARY KEY, payload TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS opportunities(day TEXT PRIMARY KEY, eligible INTEGER, reason TEXT);
         """)
-        verify_journal(self.db)
+        try:
+            verify_journal(self.db)
+            verify_registration_lineage(self.root, self.registration, self.db)
+        except Exception:
+            self.db.close()
+            fcntl.flock(self.lock, fcntl.LOCK_UN); self.lock.close()
+            raise
         self.after_receipt, self.after_scenario = after_receipt, after_scenario
         self.scenarios = {}
         self.last_message_ns = 0

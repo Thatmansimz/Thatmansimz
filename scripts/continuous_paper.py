@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import fcntl
 from datetime import datetime, timezone
 import hashlib
@@ -122,6 +123,12 @@ def run(args):
                     feed.close()
                     # Retain the cancelled attempt until it finishes. A stuck
                     # SDK must not spawn an unbounded number of connectors.
+                elif feed.closed.is_set() and monotonic >= connect_deadline + 15:
+                    # A DNS/auth thread that will not release cannot be safely
+                    # reused. Let the OS supervisor replace this process rather
+                    # than leaking connector threads or waiting forever.
+                    service.note("connect_attempt_abandoned", {"at": utc(), "reason": "feed_connect_cleanup_timeout"})
+                    raise RuntimeError("feed_connect_cleanup_timeout")
                 stopping.wait(0.1)
             if feed and connected_at:
                 kind = None
@@ -190,10 +197,10 @@ def backup(directory, output):
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     manifest = {"at": utc(), "files": {}}
     for source in sorted(directory.glob("*.sqlite")):
-        with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src, sqlite3.connect(output/source.name) as dest:
+        with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as src, closing(sqlite3.connect(output/source.name)) as dest:
             src.backup(dest)
         manifest["files"][source.name] = hashlib.sha256((output/source.name).read_bytes()).hexdigest()
-    for name in ("protocol.json", "registration.json"):
+    for name in ["protocol.json", "registration.json"] + sorted(p.name for p in directory.glob("registration-*.json")):
         (output/name).write_bytes((directory/name).read_bytes())
         manifest["files"][name] = hashlib.sha256((output/name).read_bytes()).hexdigest()
     atomic_json(output/"manifest.json", manifest)
@@ -224,12 +231,12 @@ def amend_registration(directory, output, reason):
         output.mkdir(parents=True, exist_ok=False, mode=0o700)
         saved = {"at": utc(), "files": {}}
         for source in sorted(directory.glob("*.sqlite")):
-            with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src, sqlite3.connect(output/source.name) as dest:
+            with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as src, closing(sqlite3.connect(output/source.name)) as dest:
                 if src.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                     raise ValueError("Database integrity check failed")
                 src.backup(dest)
             saved["files"][source.name] = hashlib.sha256((output/source.name).read_bytes()).hexdigest()
-        for name in ("protocol.json", "registration.json"):
+        for name in ["protocol.json", "registration.json"] + sorted(p.name for p in directory.glob("registration-*.json")):
             (output/name).write_bytes((directory/name).read_bytes())
             saved["files"][name] = hashlib.sha256((output/name).read_bytes()).hexdigest()
         atomic_json(output/"manifest.json", saved)
