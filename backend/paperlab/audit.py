@@ -14,6 +14,57 @@ from zoneinfo import ZoneInfo
 from .storage import canonical, digest, verify_journal
 
 
+def _journal_orders(sim, worker, require):
+    """Rebuild materialized orders independently of both order tables.
+
+    Worker observations may skip intermediate broker states after a disconnect,
+    so their own journal defines the last state they actually acknowledged.
+    Simulator lifecycle events must follow creation and its durable fills.
+    """
+    intents, observed, orders = {}, {}, {}
+    states = {"accepted", "partially_filled", "filled", "cancelled", "rejected", "expired"}
+    for row in worker.execute("SELECT kind,payload FROM journal ORDER BY seq"):
+        kind, payload = row[0], json.loads(row[1])
+        if kind == "intent_committed":
+            key = payload["id"]
+            require(key not in intents, f"{key}: duplicate journal intent")
+            intents[key], observed[key] = payload, "pending"
+        elif kind in ("order_acknowledged", "order_observed"):
+            key = payload["id"]
+            require(key in intents, f"{key}: observation precedes journal intent")
+            require(payload["state"] in states, f"{key}: invalid observed journal state")
+            observed[key] = payload["state"]
+    for row in sim.execute("SELECT kind,payload FROM journal ORDER BY seq"):
+        kind, payload = row[0], json.loads(row[1])
+        if kind in ("order_accepted", "order_rejected"):
+            req = payload["request"]; key = req["id"]
+            require(key not in orders, f"{key}: duplicate journal order creation")
+            orders[key] = {"id": key, "request": canonical(req), "state": kind[6:], "filled": 0}
+        elif kind == "fill" and payload["reason"] in ("entry", "exit"):
+            key = payload["order_id"]; order = orders.get(key)
+            require(order is not None, f"{key}: fill precedes journal order")
+            if order is None: continue
+            require(order["state"] in ("accepted", "partially_filled"), f"{key}: journal fill after terminal state")
+            order["filled"] += payload["qty"]
+        elif kind in ("order_partially_filled", "order_filled", "order_cancelled", "order_expired"):
+            key = payload["id"]; order = orders.get(key)
+            require(order is not None, f"{key}: lifecycle precedes journal order")
+            if order is None: continue
+            require(order["state"] in ("accepted", "partially_filled"), f"{key}: invalid terminal journal transition")
+            if kind in ("order_partially_filled", "order_filled"):
+                require(payload["filled"] == order["filled"], f"{key}: journal state/fill quantity mismatch")
+            order["state"] = kind[6:]
+    for key, order in orders.items():
+        qty = json.loads(order["request"])["qty"]
+        state, filled = order["state"], order["filled"]
+        valid = (state in ("accepted", "rejected") and filled == 0
+                 or state == "partially_filled" and 0 < filled < qty
+                 or state == "filled" and filled == qty
+                 or state in ("cancelled", "expired") and 0 <= filled < qty)
+        require(valid, f"{key}: invalid final journal order state/quantity")
+    return intents, observed, orders
+
+
 def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, allow_open=False):
     sim = sqlite3.connect(f"file:{simulator_path}?mode=ro", uri=True)
     worker = sqlite3.connect(f"file:{worker_path}?mode=ro", uri=True)
@@ -32,6 +83,11 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, al
         require(actual_bars == bars, "Simulator market record differs from registered input")
         intents = {r[0]: json.loads(r[1]) for r in worker.execute("SELECT id,request FROM intents")}
         orders = {r["id"]: dict(r) for r in sim.execute("SELECT * FROM orders")}
+        observed_states = dict(worker.execute("SELECT id,state FROM intents"))
+        journal_intents, journal_observed, journal_orders = _journal_orders(sim, worker, require)
+        require(intents == journal_intents, "Intent journal/table mismatch")
+        require(observed_states == journal_observed, "Worker order state journal/table mismatch")
+        require(orders == journal_orders, "Simulator order lifecycle journal/table mismatch")
         require(set(intents) == set(orders), "Intent/order identity mismatch")
         for key, order in orders.items():
             require(key in intents and json.loads(order["request"]) == intents[key], f"{key}: broker request differs")
@@ -44,6 +100,9 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, al
         protections = {json.loads(r[0])["lot_id"]: json.loads(r[0]) for r in sim.execute("SELECT payload FROM journal WHERE kind='protection_acknowledged'")}
         queue, gross, fees, position, peak_position = deque(), 0, 0, 0, 0
         entry_fills, executed_quantities, completed_units = {}, {}, 0
+        # Physical protective lots are separate from FIFO accounting lots:
+        # a stop targets its specific entry lot, while exits consume oldest lots.
+        active_lots = {}
         last_ts = -1
         for f in fills:
             req = intents.get(f["order_id"])
@@ -73,8 +132,20 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, al
                     entry_fills[f["id"]] = f
                     protect = protections.get(f["id"])
                     require(protect == {"lot_id": f["id"], "stop_ticks": price - f["side"] * spec["stop_ticks"], "qty": f["qty"]}, "Missing or incorrect simulated protection")
+                    require(f["id"] not in active_lots, "Duplicate live lot identity")
+                    active_lots[f["id"]] = {"id": f["id"], "parent": f["order_id"], "side": f["side"],
+                                             "qty": f["qty"], "price": price,
+                                             "stop": price - f["side"] * spec["stop_ticks"]}
                 else:
                     require(position * f["side"] < 0 and f["qty"] <= abs(position), "Exit was not reduce-only")
+                    remaining_exit = f["qty"]
+                    for key, lot in list(active_lots.items()):
+                        if lot["side"] != -f["side"]: continue
+                        take = min(remaining_exit, lot["qty"])
+                        lot["qty"] -= take; remaining_exit -= take
+                        if not lot["qty"]: del active_lots[key]
+                        if not remaining_exit: break
+                    require(remaining_exit == 0, "Exit exceeds physical lot inventory")
             elif f["reason"] == "stop":
                 parent = entry_fills.get(f["lot_id"])
                 require(parent is not None, "Stop without earlier entry fill")
@@ -85,6 +156,12 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, al
                 base = min(b["open"], stop) if parent["side"] > 0 else max(b["open"], stop)
                 price = base - parent["side"] * spec["slippage_ticks"]
                 require(position * f["side"] < 0 and f["qty"] <= abs(position), "Protective fill reverses inventory")
+                lot = active_lots.get(f["lot_id"])
+                require(lot is not None, "Stop has no remaining protected lot")
+                if lot is not None:
+                    require(f["order_id"] == lot["parent"] and f["qty"] == lot["qty"]
+                            and f["side"] == -lot["side"], "Stop differs from its remaining protected lot")
+                    del active_lots[f["lot_id"]]
             else:
                 errors.append("Unknown fill reason"); continue
             require(f["price_ticks"] == price, f"{f['id']}: fill price differs from registered model")
@@ -100,14 +177,15 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, al
             peak_position = max(peak_position, abs(position))
             require(abs(position) <= spec["quantity"], "Exposure exceeds frozen quantity")
         broker_position = sim.execute("SELECT COALESCE(SUM(side*qty),0) FROM lots").fetchone()[0]
+        actual_lots = [dict(row) for row in sim.execute("SELECT * FROM lots ORDER BY rowid")]
+        require(actual_lots == list(active_lots.values()), "Current protective lot journal/table mismatch")
         require(position == broker_position == reported_account["position"], "Position reconciliation failed")
         if not allow_open:
             require(position == 0, "End-of-test inventory remains open")
-        observed_states = dict(worker.execute("SELECT id,state FROM intents"))
         for key, order in orders.items():
             require(observed_states.get(key) == order["state"], f"{key}: order state not reconciled")
             require(order["filled"] == executed_quantities.get(key, 0), f"{key}: acknowledged fill quantity differs")
-            if order["state"] == "filled": require(order["filled"] == intents[key]["qty"], "Incomplete order marked filled")
+            if order["state"] == "filled": require(key in intents and order["filled"] == intents[key]["qty"], "Incomplete order marked filled")
             if order["state"] == "rejected": require(order["filled"] == 0, "Rejected order has market fills")
         if not allow_open:
             require(all(o["state"] in ("filled", "cancelled", "rejected", "expired") for o in orders.values()), "Pending order remains at end of test")

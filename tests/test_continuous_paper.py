@@ -183,6 +183,40 @@ result=s.reconcile(); print(json.dumps(result));s.close()
         self.assertEqual(self.service.connection, "disconnected")
         self.assertEqual(self.service.last_error, "heartbeat_timeout")
 
+    def test_heartbeats_without_first_price_trigger_stable_watchdog(self):
+        now = self.input[0]["ts"]*NS
+        self.service.connected(now)
+        for elapsed in range(5, 160, 5):
+            self.service.heartbeat(now+elapsed*NS)
+            self.service.check_health(now+elapsed*NS)
+        self.assertEqual(self.service.connection, "data_review")
+        self.assertEqual(self.service.scenarios["baseline"][2].db.execute("SELECT reason FROM halted_days").fetchone()[0], "no_recent_price_bar")
+
+    def test_reconnect_gets_first_price_window_without_erasing_prior_timestamp(self):
+        self.send(self.input[0])
+        prior = self.service.last_bar_received_ns
+        now = prior+600*NS
+        self.service.connected(now)
+        self.assertTrue(self.service.check_health(now+5*NS))
+        self.assertEqual(self.service.connection, "connected_waiting_for_bar")
+        self.assertEqual(self.service.last_bar_received_ns, prior)
+        self.service.heartbeat(now+151*NS)
+        self.service.check_health(now+151*NS)
+        self.assertEqual(self.service.connection, "data_review")
+
+    def test_failed_audit_does_not_publish_previous_pass(self):
+        self.send(self.input[0])
+        self.service.reconcile()
+        previous = self.service.meta("last_reconciled_at")
+        with self.service.db:
+            self.service.db.execute("UPDATE receipts SET received_ns=received_ns+1")
+        with self.assertRaisesRegex(ValueError, "journal/table mismatch"):
+            self.service.reconcile()
+        snapshot = self.service.snapshot(self.now_ns)
+        self.assertEqual({s["reconciliation"] for s in snapshot["scenarios"]}, {"fail"})
+        self.assertEqual(snapshot["last_reconciled_at"], previous)
+        self.assertIsNotNone(snapshot["last_audit_attempt_at"])
+
     def test_daily_close_reports_and_halts_unresolved_inventory(self):
         for b in self.input[:17]: self.send(b)
         end = int(datetime(2026,9,14,16,1,tzinfo=ZoneInfo("America/New_York")).timestamp())*NS

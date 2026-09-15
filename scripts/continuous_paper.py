@@ -51,7 +51,11 @@ def serve_status(path, token, port):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+            self.send_header("Content-Length", str(len(body)))
+            try:
+                self.end_headers(); self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # A reader leaving does not invalidate the durable status.
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -63,7 +67,7 @@ def publish(snapshot, env):
     if urlparse(endpoint).scheme != "https" or not token:
         raise ValueError("Publishing requires HTTPS and a private status token")
     # Deliberate allowlist: never transmit the SQLite ledger or market prices.
-    allowed = ("schema_version", "run_id", "observed_at", "registered_at", "protocol_sha256", "mode", "provider", "dataset", "feed_schema", "connection", "hard_halt", "last_error", "last_message_at", "last_bar_received_at", "last_reconciled_at", "contract", "receipts", "excluded_receipts", "complete_opening_opportunities", "observed_opening_dates", "engineering_review_due", "scenarios", "external_broker_connected", "live_order_routing", "profitability_established", "host", "initial_balance_cents", "scope")
+    allowed = ("schema_version", "run_id", "observed_at", "registered_at", "protocol_sha256", "mode", "provider", "dataset", "feed_schema", "connection", "hard_halt", "last_error", "last_message_at", "last_bar_received_at", "last_reconciled_at", "last_audit_attempt_at", "contract", "receipts", "excluded_receipts", "complete_opening_opportunities", "observed_opening_dates", "engineering_review_due", "scenarios", "external_broker_connected", "live_order_routing", "profitability_established", "host", "initial_balance_cents", "scope")
     body = json.dumps({k: snapshot[k] for k in allowed}, allow_nan=False).encode()
     request = Request(endpoint, data=body, headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"}, method="POST")
     with urlopen(request, timeout=5) as response:
@@ -86,6 +90,7 @@ def run(args):
     retry_delay = 5
     last_report = 0
     connected_at = 0
+    connect_deadline = 0
     stop_at = time.monotonic() + args.max_seconds if args.max_seconds else None
     interrupted = service.db.execute("SELECT COUNT(*) FROM journal WHERE kind='process_started'").fetchone()[0] > 1
     if interrupted: service.halt_day("process_restart_gap", time.time_ns())
@@ -97,16 +102,28 @@ def run(args):
             hard = service.meta("hard_halt")
             if not hard and feed is None and monotonic >= retry_at:
                 feed = DatabentoFeed(key)
-                try:
-                    service.connection = "connecting"
-                    atomic_json(args.run_dir/"status.json", service.snapshot())
-                    feed.start(); service.connected(time.time_ns()); connected_at = time.monotonic()
-                except Exception as exc:
-                    service.disconnected(feed.safe_error(exc), time.time_ns())
-                    feed.close(); feed = None
-                    retry_at = time.monotonic() + retry_delay
-                    retry_delay = min(retry_delay*2, 900)
-            if feed:
+                connected_at = 0
+                connect_deadline = monotonic + 45
+                service.connection = "connecting"
+                atomic_json(args.run_dir/"status.json", service.snapshot())
+                feed.begin()
+            if feed and not connected_at:
+                if feed.connection_done.is_set():
+                    if feed.connection_error or feed.closed.is_set():
+                        if not feed.closed.is_set():
+                            service.disconnected(feed.connection_error, time.time_ns())
+                        feed.close(); feed = None
+                        retry_at = time.monotonic() + retry_delay
+                        retry_delay = min(retry_delay*2, 900)
+                    else:
+                        service.connected(time.time_ns()); connected_at = time.monotonic()
+                elif monotonic >= connect_deadline and not feed.closed.is_set():
+                    service.disconnected("feed_connect_timeout", time.time_ns())
+                    feed.close()
+                    # Retain the cancelled attempt until it finishes. A stuck
+                    # SDK must not spawn an unbounded number of connectors.
+                stopping.wait(0.1)
+            if feed and connected_at:
                 kind = None
                 try:
                     if feed.overflow.is_set():
@@ -184,6 +201,61 @@ def backup(directory, output):
     print(json.dumps({"backup": str(output), "files": len(manifest["files"])}))
 
 
+def amend_registration(directory, output, reason):
+    """Explicit stopped-run code upgrade: preserve balances, receipts and freeze."""
+    from backend.paperlab.continuous import code_hashes, runtime_versions
+    from backend.paperlab.storage import digest, record, connect, verify_journal
+    if not reason.strip() or len(reason) > 500: raise ValueError("A concise upgrade reason is required")
+    if not (directory/"STOP").exists(): raise ValueError("A deliberate STOP is required before amendment")
+    lock = (directory/"worker.lock").open("a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        raise ValueError("Stop the worker before amending its registration") from None
+    try:
+        original = (directory/"registration.json").read_bytes()
+        manifest = json.loads(original)
+        if digest(json.loads((directory/"protocol.json").read_text())) != manifest["protocol_sha256"]:
+            raise ValueError("A code amendment cannot change the frozen protocol")
+        new_code, new_runtime = code_hashes(), runtime_versions()
+        if new_code == manifest["code_sha256"] and new_runtime == manifest["runtime"]:
+            raise ValueError("The registered implementation is already current")
+        output.mkdir(parents=True, exist_ok=False, mode=0o700)
+        saved = {"at": utc(), "files": {}}
+        for source in sorted(directory.glob("*.sqlite")):
+            with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as src, sqlite3.connect(output/source.name) as dest:
+                if src.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                    raise ValueError("Database integrity check failed")
+                src.backup(dest)
+            saved["files"][source.name] = hashlib.sha256((output/source.name).read_bytes()).hexdigest()
+        for name in ("protocol.json", "registration.json"):
+            (output/name).write_bytes((directory/name).read_bytes())
+            saved["files"][name] = hashlib.sha256((output/name).read_bytes()).hexdigest()
+        atomic_json(output/"manifest.json", saved)
+        previous_hash = hashlib.sha256(original).hexdigest()
+        archive = "registration-" + previous_hash + ".json"
+        if not (directory/archive).exists():
+            with (directory/archive).open("xb") as f: f.write(original); f.flush(); os.fsync(f.fileno())
+        amendment = {"at": utc(), "reason": reason, "previous_registration": archive,
+                     "previous_registration_sha256": previous_hash,
+                     "code_sha256": new_code, "runtime": new_runtime,
+                     "backup_manifest_sha256": hashlib.sha256((output/"manifest.json").read_bytes()).hexdigest()}
+        db = connect(directory/"receipts.sqlite")
+        try:
+            verify_journal(db)
+            with db: record(db, "implementation_amended", amendment)
+        finally: db.close()
+        manifest["code_sha256"], manifest["runtime"] = new_code, new_runtime
+        manifest.setdefault("implementation_amendments", []).append(amendment)
+        atomic_json(directory/"registration.json", manifest)
+        # STOP remains. Continuing requires an explicit operator decision after
+        # validation; an amendment never starts a feed or resets an account.
+        print(json.dumps({"run_id": manifest["run_id"], "backup": str(output), "amended": True}))
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN); lock.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -201,6 +273,10 @@ def main():
     back = sub.add_parser("backup")
     back.add_argument("--run-dir", type=Path, required=True)
     back.add_argument("--output", type=Path, required=True)
+    amend = sub.add_parser("amend-registration")
+    amend.add_argument("--run-dir", type=Path, required=True)
+    amend.add_argument("--output", type=Path, required=True, help="New coherent backup directory")
+    amend.add_argument("--reason", required=True)
     stop = sub.add_parser("stop")
     stop.add_argument("--run-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -210,6 +286,7 @@ def main():
     elif args.command == "run": run(args)
     elif args.command == "status": print((args.run_dir/"status.json").read_text())
     elif args.command == "backup": backup(args.run_dir, args.output)
+    elif args.command == "amend-registration": amend_registration(args.run_dir, args.output, args.reason)
     elif args.command == "stop": (args.run_dir/"STOP").write_text(utc()+"\n")
 
 

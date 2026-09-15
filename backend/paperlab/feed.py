@@ -15,13 +15,33 @@ class DatabentoFeed:
         self.key, self.client = key, None
         self.events = queue.Queue(maxsize=4096)
         self.overflow = threading.Event()
+        self.closed = threading.Event()
+        self.connection_done = threading.Event()
+        self.connection_error = None
+        self.connection_thread = None
 
     def safe_error(self, exc):
         return re.sub(r"db-[A-Za-z0-9_-]+", "[redacted]", str(exc).replace(self.key, "[redacted]"))[:300]
 
     def _put(self, kind, payload, received=None):
+        if self.closed.is_set(): return
         try: self.events.put_nowait((kind, payload, received if received is not None else time.time_ns()))
         except queue.Full: self.overflow.set()
+
+    def begin(self):
+        """Connect away from the supervisor so DNS/auth cannot block STOP/status."""
+        if self.connection_thread is not None:
+            raise ValueError("A feed connection may only be started once")
+        def connect():
+            try:
+                self.start()
+            except Exception as exc:
+                self.connection_error = self.safe_error(exc)
+            finally:
+                if self.closed.is_set(): self._terminate()
+                self.connection_done.set()
+        self.connection_thread = threading.Thread(target=connect, daemon=True)
+        self.connection_thread.start()
 
     def start(self):
         import databento as db
@@ -47,14 +67,24 @@ class DatabentoFeed:
             else:
                 self._put("heartbeat", None, received)
 
+        if self.closed.is_set(): return
         self.client.subscribe(dataset="GLBX.MDP3", schema="ohlcv-1m", stype_in="continuous", symbols=["MNQ.v.0"])
+        if self.closed.is_set(): return
         self.client.add_callback(callback, exception_callback=lambda e: self._put("error", self.safe_error(e)))
         self.client.start()
 
-    def close(self):
+    def _terminate(self):
         if self.client:
-            self.client.terminate()
+            try: self.client.terminate()
+            except ValueError: pass  # SDK can refuse termination before subscribe.
             self.client = None
+
+    def close(self):
+        self.closed.set()
+        # subscribe holds an SDK lock during DNS/auth. Never wait for that lock
+        # on the supervisor thread. The connecting thread cleans up on return.
+        if self.connection_thread is None or self.connection_done.is_set():
+            threading.Thread(target=self._terminate, daemon=True).start()
 
     def is_connected(self):
         return bool(self.client and self.client.is_connected())

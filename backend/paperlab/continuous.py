@@ -141,10 +141,12 @@ class ContinuousPaper:
         self.after_receipt, self.after_scenario = after_receipt, after_scenario
         self.scenarios = {}
         self.last_message_ns = 0
+        self.connection_started_ns = 0
         self.last_bar_received_ns = 0
         self.connection = "starting"
         self.last_error = None
         self.audit_results = {}
+        self.audit_state = "pending"
         for name in self.spec["experiment_family"]:
             s = dict(self.spec, symbol="RESOLVE_FROM_DATED_MAPPING", scenario=name)
             s.update(self.spec["stress_overrides"].get(name, {}))
@@ -214,6 +216,8 @@ class ContinuousPaper:
     def connected(self, now_ns):
         self.connection = "connected_waiting_for_bar"
         self.last_message_ns = now_ns
+        self.connection_started_ns = now_ns
+        self.last_error = None
         self.note("feed_connected", {"at": utc(now_ns)})
 
     def heartbeat(self, now_ns):
@@ -330,13 +334,24 @@ class ContinuousPaper:
             if self.last_message_ns and now_ns-self.last_message_ns > self.spec["heartbeat_timeout_seconds"]*NS:
                 self.disconnected("heartbeat_timeout", now_ns)
                 return False
-            anchor = self.last_bar_received_ns or self.last_message_ns
+            anchor = max(self.last_bar_received_ns, self.connection_started_ns)
             if anchor and now_ns-anchor > self.spec["price_timeout_seconds"]*NS and self.connection != "data_review":
                 self.connection = "data_review"
                 self.halt_day("no_recent_price_bar", now_ns)
         return True
 
     def reconcile(self):
+        # A previous success is historical evidence, not the current verdict.
+        self.audit_results = {}
+        self.audit_state = "pending"
+        self.set_meta("last_audit_attempt_at", utc())
+        try:
+            return self._reconcile()
+        except Exception:
+            self.audit_state = "fail"
+            raise
+
+    def _reconcile(self):
         verify_journal(self.db)
         rows = self.db.execute("SELECT * FROM receipts ORDER BY ts").fetchall()
         # Reconcile receipt journal against its materialized table separately.
@@ -353,6 +368,7 @@ class ContinuousPaper:
                 raise ValueError(f"{name}: independent reconciliation failed: " + "; ".join(result["errors"][:3]))
             results[name] = result
         self.audit_results = results
+        self.audit_state = "pass"
         self.set_meta("last_reconciled_at", utc())
         return results
 
@@ -377,7 +393,7 @@ class ContinuousPaper:
               "completed_contract_units": self.audit_results.get(name, {}).get("completed_contract_units", 0),
               "halted_days": worker.db.execute("SELECT COUNT(*) FROM halted_days").fetchone()[0],
               "risk_halted": bool(worker.db.execute("SELECT 1 FROM meta WHERE key='risk_halted'").fetchone()),
-              "reconciliation": "pass" if name in self.audit_results else "pending"})
+              "reconciliation": self.audit_state})
         return {"schema_version": 1, "run_id": self.registration["run_id"], "observed_at": utc(now_ns),
           "registered_at": self.registration["registered_at"], "protocol_sha256": self.registration["protocol_sha256"],
           "mode": "streaming_internal_paper", "provider": "Databento", "dataset": "GLBX.MDP3", "feed_schema": "ohlcv-1m",
@@ -385,7 +401,7 @@ class ContinuousPaper:
           "hard_halt": self.meta("hard_halt"), "last_error": self.last_error,
           "last_message_at": utc(self.last_message_ns) if self.last_message_ns else None,
           "last_bar_received_at": utc(self.last_bar_received_ns) if self.last_bar_received_ns else None,
-          "last_reconciled_at": self.meta("last_reconciled_at"), "contract": self.meta("active_contract") or self.meta("feed_contract"),
+          "last_reconciled_at": self.meta("last_reconciled_at"), "last_audit_attempt_at": self.meta("last_audit_attempt_at"), "contract": self.meta("active_contract") or self.meta("feed_contract"),
           "receipts": len(rows), "excluded_receipts": sum(r["disposition"] not in ("accepted", "outside_strategy_session") for r in rows),
           "complete_opening_opportunities": complete, "observed_opening_dates": len(day_groups),
           "engineering_review_due": complete >= 20, "scenarios": scenarios,
