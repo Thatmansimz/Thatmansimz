@@ -1,0 +1,53 @@
+{
+  "as_of_utc": "2026-09-15",
+  "purpose": "engineering_hardening_not_strategy_validation",
+  "registered_run": "mnq-forward-20260915",
+  "registered_at": "2026-09-15T02:31:49.054019+00:00",
+  "protocol_sha256": "517fe4c2af9f031e8d40cd841d8caa51aa15fe48deeaba3373d250481f41f412",
+  "current_backend_commit": "3842bee8afcaf1b60942cb673d13a1c3473ce0e0",
+  "initial_backend_commit": "16f6d3c411602bd6686a21372942db5948a2ac53",
+  "implementation_amendments": 2,
+  "balances_and_original_freeze_preserved": true,
+  "adversarial_findings_fixed": [
+    "Current protective lot must match fill/journal reconstruction",
+    "Deleted orders must fail journal/table reconciliation",
+    "First-price timeout uses a stable connection anchor",
+    "Failed audit cannot publish a cached successful verdict",
+    "Ambiguous amendment or missing archive blocks before recovery",
+    "Stuck connector cleanup exits for OS-supervised recovery"
+  ],
+  "tests": {
+    "backend_suite": 150,
+    "dedicated_locked_paper_runtime": 52,
+    "status_relay": 10,
+    "redis_integration": "Actual isolated Redis Lua execution; real Upstash provisioning still pending"
+  },
+  "overnight_failure": {
+    "recorded_receipts_before_recovery": 2,
+    "orders": 0,
+    "complete_opening_opportunities": 0,
+    "observation": "Lid/sleep and network history coincided with heartbeat gaps and DNS failures; continuity was not achieved"
+  },
+  "flat_state_supervisor_drill": {
+    "at": "2026-09-15T15:30:40Z",
+    "source_commit": "9e99c78317f716849c149a3d02b9c610c244c945",
+    "result": "pass_for_flat_state_supervisor_recovery",
+    "before_receipts": 3,
+    "after_receipts": 6,
+    "original_registration_preserved": true,
+    "both_scenarios_equity_cents": 5000000,
+    "orders": 0,
+    "reconciliation": "pass"
+  },
+  "remaining": [
+    "Company data entitlements and actual billing verification",
+    "Upstash owner terms acceptance, real provisioning and end-to-end relay verification",
+    "Persistent cloud host, off-host backup recovery and independent alert delivery",
+    "Completed external broker adapter and all six live-pilot requirements"
+  ],
+  "new_paid_services_purchased": false,
+  "new_recurring_budget_usd_per_month": 200,
+  "external_broker_connected": false,
+  "live_order_routing": false,
+  "profitability_established": false
+}

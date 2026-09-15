@@ -193,3 +193,23 @@ E8 — [Paper milestone evidence bundle, revision 2](https://drive.google.com/fi
 The approved layout is live at **[tajari.vercel.app](https://tajari.vercel.app)**. Share this stable link with Taj; it does not require Vercel login or the local computer to remain online. Frontend release `138b0e7` is deployed to Vercel project `tajari`. The hosted workspace includes historical evidence, the test plan, the six live-pilot requirements and pricing tools. Its paper monitor explicitly reports that the local engine is not connected. No broker, account database or trading control was published. All six live-pilot gates remain unverified. The existing local paper engine was not replaced. The workspace is accessible to anyone with the URL; Google Doc and Drive permissions are unchanged.
 
 A separate application checkout now implements the evidence workspace, six blocked live-pilot gates, pricing calculator, test guidance and selected simulator/API repairs. The release notes distinguish those repairs from remaining Nullius provenance/statistics work and incomplete broker integration. The original paper engine was not replaced. All six live gates remain unverified; no live order is authorized.
+
+## Continuous paper service — September 15, 2026
+
+Tajari now has a separate supervised worker consuming arriving Databento MNQ minute bars and recording simulated execution in two persistent ledgers. Run mnq-forward-20260915 was registered at 2026-09-15 02:31:49 UTC before subscription. Its baseline and worse-cost accounts each began with simulated $50,000. The registered strategy, cost comparison, data-access record and original registration time remain fixed. There is no external broker connection or real-money order route.
+
+The first overnight run failed continuity: lid/sleep and network history coincided with heartbeat gaps and DNS failures. Only two bars were recorded before the interruption. Entries paused; both accounts remained flat, with no complete opening opportunity. That failure stays in the evidence.
+
+Adversarial review found four defects: corrupted active stops and deleted orders could escape reconciliation; heartbeats could postpone the first-price timeout; and failed audits could show an earlier pass. Fixes now reconstruct protection and order lifecycle, enforce the timeout and invalidate failed verdicts. Stalled connection setup leaves STOP responsive, and ambiguous code upgrades block before recovery.
+
+The same run was backed up, reconciled and explicitly upgraded, preserving its original registration, frozen rule, balances, receipts and exclusions. Live bars resumed. A deliberate process-crash drill while flat restarted the same run and received new bars without orders or balance changes. This verifies that recovery case, not every outage or cloud uptime.
+
+E10 — Continuous paper service guide and frozen protocol. E11 — Adversarial fixes and recovery evidence. Verification passed: 150 backend tests, 52 tests in the dedicated paper runtime, and 10 relay tests including actual isolated Redis execution. Actual Upstash delivery still needs provisioning and end-to-end verification.
+
+The revised ceiling for new recurring charges is $200/month. Existing Databento access delivered live bars; current billing and permitted company/non-display use remain unverified. Databento advertises Standard at $199/month. A proposed $6/month persistent VM plus that new plan totals $205 before extras, so neither was purchased. Technical access does not establish all commercial rights.
+
+The shareable production website currently says the worker is not connected to its shared view. Free Upstash provisioning awaits the owner's acceptance of Vercel integration terms. The prepared relay authenticates aggregate reports, pins the run and rejects stale or conflicting updates. Prices, private ledgers and credentials stay off the public site.
+
+Next: verify entitlements, provision a persistent host, complete real shared status, prove off-host backup/restore and independent alerts. The Mac remains vulnerable to lid closure, power and network loss. Count complete opportunities and market conditions; twenty opportunities prompts engineering review, not profit validation. All six live-pilot requirements remain unverified, including an actual broker adapter and separate real-money authorization.
+
+The partner business-structure discussion is in the [shared master document](https://docs.google.com/document/d/1lgEJ4ND83JNOWouX8QoYAcEl_BB4NahogO3FElErMsY/edit).

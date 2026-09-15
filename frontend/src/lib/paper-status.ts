@@ -26,6 +26,7 @@ export type PaperStatus = {
   last_message_at: string | null;
   last_bar_received_at: string | null;
   last_reconciled_at: string | null;
+  last_audit_attempt_at: string | null;
   contract: { symbol: string } | null;
   receipts: number;
   excluded_receipts: number;
@@ -83,6 +84,7 @@ export function parsePaperStatus(value: unknown): PaperStatus {
     hard_halt: v.hard_halt === null ? null : str(v.hard_halt, /^[a-z_]+$/),
     last_message_at: optionalStamp(v.last_message_at), last_bar_received_at: optionalStamp(v.last_bar_received_at),
     last_reconciled_at: optionalStamp(v.last_reconciled_at),
+    last_audit_attempt_at: v.last_audit_attempt_at == null ? null : stamp(v.last_audit_attempt_at),
     contract: v.contract ? { symbol: str((v.contract as Record<string, unknown>).symbol, /^MNQ[HMUZ][0-9]{1,2}$/) } : null,
     receipts: num(v.receipts), excluded_receipts: num(v.excluded_receipts), complete_opening_opportunities: num(v.complete_opening_opportunities),
     observed_opening_dates: num(v.observed_opening_dates), engineering_review_due: v.engineering_review_due === true,

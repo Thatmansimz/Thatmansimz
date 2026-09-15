@@ -1,20 +1,32 @@
-# Tajari continuous paper service · September 14, 2026
+# Tajari continuous paper service · September 15, 2026
 
 The new service connects the existing Databento account to an isolated, persistent internal paper ledger. It uses real arriving MNQ minute bars and simulated execution. It cannot submit an order to a broker or exchange. The earlier engine and its historical campaign remain separate.
 
 ## Installed run and verification
 
-Run `mnq-forward-20260915` was registered at **2026-09-15 02:31:49 UTC** (September 14 evening in Arizona) and installed as the current user's supervised macOS service. It runs immutable backend release `16f6d3c411602bd6686a21372942db5948a2ac53`. Live minute bars arrived and the service resolved MNQU6. Both simulated accounts start at $50,000. The startup observation occurred outside the rule's trading window, with no orders or fills; it is not a performance result.
+Run `mnq-forward-20260915` was registered at **2026-09-15 02:31:49 UTC**, before its first subscription, and installed as a supervised macOS service. The first immutable backend was `16f6d3c411602bd6686a21372942db5948a2ac53`. Real MNQ minute bars arrived and mapped to MNQU6. Both simulated accounts began at $50,000; the initial check occurred outside the opening window and created no orders.
 
-All **128 backend tests** pass. The production frontend build and TypeScript checks pass. Browser verification reached the actual worker through its authenticated status API, with HTTP 401 without the private token and HTTP 200 with it. Desktop and 390px mobile layouts passed; no browser errors or horizontal overflow were observed. The [bounded smoke-test record](https://tajari.vercel.app/evidence/continuous-paper-smoke.json) preserves the connection and interface checks. A coherent backup of that completed smoke run was created separately; the operating run was not reset.
+**The overnight run was interrupted.** The host's lid/sleep and network history coincided with long heartbeat gaps and DNS failures. Only two bars had been recorded before the interruption, and the worker paused entries. This failed continuity observation is retained. It is not a completed forward trading sample.
+
+An adversarial review reproduced four defects: active protective-lot corruption could escape reconciliation; deleted materialized orders could escape journal checks; heartbeats could indefinitely postpone the first-price timeout; and a failed audit could still show a previous “pass.” All four were fixed. Initial hardening release `9e99c78317f716849c149a3d02b9c610c244c945` also moves DNS/authentication off the supervisor thread and safely cancels an unfinished connection. Synthetic STOP testing returned in under one second while connection setup was deliberately stalled.
+
+The same run was deliberately stopped, coherently backed up, independently reconciled, and explicitly amended to the new code. The original registration time, frozen strategy/cost assumptions, prior receipts, outage exclusions and both account balances remain unchanged. The old registration and STOP decision are archived. Live bars resumed after the upgrade. No historical backfill, reset, external broker order or performance claim was introduced.
+
+A second review added an amendment-lineage startup guard, complete registration archives in backups, and a bounded cleanup deadline for stalled connectors. Current immutable backend release is `3842bee8afcaf1b60942cb673d13a1c3473ce0e0`. A deliberately interrupted amendment blocks before ledger recovery, and a restored amended backup passes the new lineage checks.
+
+All **150 backend tests** pass in the development environment. All **52 paper-core tests** also pass in the dedicated locked paper runtime. The full legacy suite requires additional packages such as `pytz`; it is not installed or claimed to pass in the minimal paper-only environment. Coverage includes real subprocess crashes, partial fills, protection, journal/table tampering, late/missing data, contract rolls, restart recovery and registration amendments.
+
+The frontend build and TypeScript checks passed for the initial monitor. Browser checks reached the actual authenticated status API (401 without its token; 200 with it), including desktop and 390px mobile layouts. See the [initial connectivity record](https://tajari.vercel.app/evidence/continuous-paper-smoke.json) and the [hardening/recovery record](https://tajari.vercel.app/evidence/continuous-paper-hardening.json). These verify specified engineering behavior, not profitability or enterprise uptime.
 
 ## Access and budget
 
 A bounded check of the existing Databento key authenticated to GLBX.MDP3, resolved the continuous MNQ input to an actual contract and received a live `ohlcv-1m` bar. The check retained timestamps and counts, not prices, and was not a strategy evaluation. No subscription or plan was changed. Raw data and private ledgers stay on the worker host.
 
-The budget for new services is at most $100/month. No new Databento plan was purchased. Databento currently advertises a Standard live-data plan at $199/month, so buying it would exceed that budget; existing technical access is already working. Existing account billing has not been independently reconciled. [Provider pricing](https://databento.com/pricing), [live API documentation](https://databento.com/docs/api-reference-live).
+The updated ceiling for new recurring data/hosting charges is **$200/month**. No new subscription or paid hosting was purchased. Databento advertises Standard at $199/month, but current technical access already works; account billing and the subscriber's permitted company/non-display use still need verification. A plan payment alone does not establish all rights. [Pricing](https://databento.com/pricing), [licensing guide](https://databento.com/docs/api-reference-live/basics/metered-pricing).
 
-The selected partner-dashboard status store is Upstash Redis on its free plan, with automatic upgrades disabled. Vercel requires the account owner to accept the integration terms before provisioning can finish. Until then, the production website explicitly reports the continuous worker as unconnected. The authenticated local status endpoint can already observe the real worker; no public tunnel or trade-control endpoint is required.
+The selected partner-dashboard store is Upstash Redis on its free plan, with automatic upgrades disabled. Vercel requires the account owner to accept integration terms before it can be provisioned. The relay code supports authenticated, bounded, allowlisted reports, pins the expected run, and atomically refuses an older or conflicting report. It remains unconnected until real credentials are provisioned and the flow is tested end to end. Production explicitly reports that current worker values are unavailable.
+
+For a persistent cloud worker, see the [cutover runbook](https://tajari.vercel.app/evidence/cloud-paper-runbook.md). A proposed 1 GiB DigitalOcean VM lists at $6/month before extras. A new $199 data plan plus that host is $205, so that combination exceeds the current combined ceiling. Confirm existing billing before selecting any new charges. No cloud host, off-host restore drill or independent alert delivery has been demonstrated.
 
 ## Registered operating rule
 
@@ -30,7 +42,7 @@ The runtime records the protocol hash, source-file hashes, Python/Databento vers
 - Reject stale, incomplete, conflicting, out-of-order or unmapped data. Processing delay is checked separately from network arrival time. New order eligibility cannot precede the actual decision time.
 - Cancel unfilled entries before processing a post-gap event. Disconnects, missed opening minutes and risk limits suppress new entries. Outages remain in the evidence even when later data arrives.
 - Resolve dated instrument IDs to actual contracts. Switch only while both scenarios are flat with no pending order, and suppress that day's entry. A contract roll with inventory hard-halts instead of carrying a lot into a different contract.
-- Recompute orders, eligible events, fills, FIFO P&L and fees independently from the two ledgers. Daily close reports preserve unresolved inventory instead of claiming a clean session. Data gaps cannot receive invented fills.
+- Reconstruct order identities, requests and lifecycle from journals; compare every current protective lot against fills, then independently recompute eligible events, FIFO P&L and fees. Daily close reports preserve unresolved inventory instead of claiming a clean session. Data gaps cannot receive invented fills.
 - Count opening opportunities as they stood at decision time. Twenty complete opportunities call for an engineering review, not automatic validation or scaling.
 
 Simulated stops cannot operate on prices that were never received, and they are not exchange-held orders. Loss limits are triggers, not guaranteed maximum losses through gaps. An external futures paper adapter and all six live-pilot requirements remain unfinished.
@@ -57,5 +69,7 @@ For a deliberate stop, write the persistent STOP marker using the command below.
 .venv-paper/bin/python scripts/continuous_paper.py stop --run-dir /absolute/private/path/new-run
 .venv-paper/bin/python scripts/continuous_paper.py backup --run-dir /absolute/private/path/new-run --output /absolute/private/path/new-backup
 ```
+
+For a reviewed code/runtime fix, `amend-registration --run-dir … --output /new/backup --reason …` requires a stopped run and an unchanged protocol. It preserves the old registration, creates a coherent backup and appends a journal amendment. It leaves STOP in place; a continuation is a separate recorded operational decision. Any cloud copy must preserve registration archives and have only one active worker owner.
 
 Do not delete a STOP marker or alter a frozen registration to force a failed run to pass. Inspect failures and make any continuation decision explicit. Real-money trading still requires separate authorization after all six evidence and execution requirements are met.

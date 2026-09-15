@@ -38,6 +38,7 @@ export default function ContinuousPaper() {
     return () => { controller.abort(); clearInterval(timer); };
   }, [refresh]);
   const stale = status ? isStale(status, clock) : false;
+  const needsReview = status?.scenarios.some(s => s.reconciliation === "fail") || ["data_review", "disconnected", "halted", "stopped"].includes(status?.connection || "");
   const baseline = status?.scenarios.find(s => s.name === "baseline");
   return (
     <section className="panel continuous-paper" aria-labelledby="continuous-title">
@@ -46,7 +47,7 @@ export default function ContinuousPaper() {
         <button className="button" onClick={() => setRefresh(x => x + 1)} aria-label="Refresh continuous paper status"><RefreshCw size={15} /> Refresh</button>
       </div>
       <p>The registered rule observes MNQ minute bars from Databento and records simulated orders in two persistent ledgers. The baseline and worse-cost account use the same arriving events.</p>
-      <div className={`notice ${stale || status?.hard_halt ? "amber" : ""}`} aria-live="polite">
+      <div className={`notice ${stale || status?.hard_halt || needsReview ? "amber" : ""}`} aria-live="polite">
         <Radio size={20} />
         <p><strong>{status ? (stale ? "Worker report is stale" : stateLabels[status.connection] || "Status unavailable") : "Worker connection"}</strong><br />
           {status ? `Last report: ${date(status.observed_at)}. ${stale ? "These are last-known values; the worker may be offline." : "This view refreshes every 30 seconds."}` : message}
@@ -66,7 +67,8 @@ export default function ContinuousPaper() {
             <div><dt>Contract</dt><dd>{status.contract?.symbol || "Waiting for mapped bars"}</dd></div>
             <div><dt>Last minute bar received</dt><dd>{date(status.last_bar_received_at)}</dd></div>
             <div><dt>Recorded / excluded bars</dt><dd>{status.receipts} / {status.excluded_receipts}</dd></div>
-            <div><dt>Last reconciliation</dt><dd>{date(status.last_reconciled_at)}</dd></div>
+            <div><dt>Last successful reconciliation</dt><dd>{date(status.last_reconciled_at)}</dd></div>
+            <div><dt>Latest audit attempt</dt><dd>{date(status.last_audit_attempt_at)}</dd></div>
             <div><dt>Run registered</dt><dd>{date(status.registered_at)}</dd></div>
           </dl></div>
         </div>

@@ -1,0 +1,20 @@
+# Persistent-host cutover — prepared, not deployed
+
+September 15, 2026. The current worker is supervised on the Mac. A closed lid interrupted the actual run. A persistent Linux VM is the next infrastructure milestone; a Vercel frontend deployment does not host the continuous TCP feed.
+
+A DigitalOcean Basic VM with 1 GiB RAM and 25 GiB disk is a reasonable initial capacity hypothesis for this one-symbol engineering worker. The listed price is $6/month before optional backups, overages and tax. Confirm actual memory/disk use and billing before purchase. The 1 GiB size is a starting point, not a measured capacity guarantee. [Official VM pricing](https://www.digitalocean.com/pricing/droplets).
+
+The current combined ceiling for **new recurring charges is $200/month**. Existing Databento technical access works, but its current invoice and permitted company use have not been verified. A new $199 data plan plus this $6 host would be $205 before extras, so that combination has not been purchased. First verify existing access and billing; do not replace a working subscription just to match the advertised plan. No cloud account or server was provisioned.
+
+## Cutover acceptance
+
+1. Confirm a company-controlled hosting account and billing owner. Configure SSH keys and MFA; keep provider/API secrets in the private account or host files, never the repository, chat or frontend.
+2. Confirm the Databento subscriber and permitted internal company use, including non-display use. Technical bar delivery is evidence of connectivity, not proof of every commercial or distribution right. Keep raw prices and ledgers private. [Databento licensing guide](https://databento.com/docs/api-reference-live/basics/metered-pricing).
+3. Install the exact reviewed release and locked Python dependencies under `/opt/tajari`, with a dedicated unprivileged `tajari` user. The supplied `deploy/tajari-paper.service` is the supervisor template. Make the private state directory writable only by that account and the code directory read-only to it. Restrict inbound access to authorized SSH; status binds only to loopback. Permit outbound HTTPS/DNS and the Databento gateway TCP port 13000.
+4. Deliberately stop the Mac worker and take the coherent multi-ledger backup. Verify its manifest and retain an off-host copy. Never run two owners of the same logical paper run on different machines: the local file lock cannot prevent that split-brain condition.
+5. Copy the existing run, prior registration archives and backup record through SSH. Verify copied hashes. Python/runtime fingerprints are part of registration; use the explicit stopped-run amendment command for a reviewed runtime/code change, retaining the original protocol and registration time. Do not import a new balance or backfill the missed period.
+6. Use the authenticated aggregate publisher after the real Upstash integration is provisioned. Pin the expected run ID on Vercel. Store the publishing token on the worker; keep Redis credentials only on Vercel. Reject stale, conflicting and out-of-order reports. Shared reports contain no market bars.
+7. Reconcile before resume. Record the cutover and archive the STOP marker only after the decision to resume. Retain today's exclusion and all prior outages. Prove a supervisor restart, provider disconnect, interrupted receipt recovery, stale remote status and restore from an independent backup. Verify no duplicate order/fill and no unexplained position or P&L change.
+8. Observe complete opening opportunities and multiple market conditions. Review resource growth, disk space, heartbeat gaps and reconciliation failures. Configure an independent actionable alert destination and retention/backup policy before claiming unattended operational readiness. Twenty opportunities triggers an engineering review; it does not validate a return.
+
+The cloud milestone remains incomplete until the account, entitlements, real deployment, off-host recovery and alert delivery have been demonstrated. A prepared unit file and synthetic tests are not an uptime guarantee. No broker account is connected, and there is no real-money order route.

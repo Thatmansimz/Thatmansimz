@@ -834,6 +834,9 @@ function Service() {
           >
             Open the pilot package <ArrowUpRight size={15} />
           </a>
+          <a className="text-button" href="https://docs.google.com/document/d/1lgEJ4ND83JNOWouX8QoYAcEl_BB4NahogO3FElErMsY/edit" target="_blank" rel="noreferrer">
+            Ownership and Texas business setup <ArrowUpRight size={15} />
+          </a>
           <a
             className="text-button"
             href="/evidence/paper-milestone-report.md"

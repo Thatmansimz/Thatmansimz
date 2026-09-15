@@ -1,3 +1,5 @@
+> **Historical record — superseded September 15, 2026.** The July account, validation, 60-day and uptime statements below are retained as historical claims and are not the current operating assessment. Use [the current service guide](CONTINUOUS_PAPER_SERVICE.md), [master plan](TAJARI_MASTER_PLAN.md), and [shared master document](https://docs.google.com/document/d/1lgEJ4ND83JNOWouX8QoYAcEl_BB4NahogO3FElErMsY/edit). All six live-pilot requirements remain unverified.
+
 # Tajari AI Trading — Handoff & Context Document
 
 > **Purpose:** hand this to a new Claude Code session, a business partner, or
