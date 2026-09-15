@@ -1,0 +1,32 @@
+{
+  "checked_at": "2026-09-15T02:31:19.119167+00:00",
+  "run_id": "smoke-20260915",
+  "source_commit": "16f6d3c411602bd6686a21372942db5948a2ac53",
+  "scope": "Bounded live-connectivity and observation test; no trading-window result or profitability claim",
+  "provider": "Databento",
+  "dataset": "GLBX.MDP3",
+  "schema": "ohlcv-1m",
+  "received_bars": 2,
+  "actual_contract": "MNQU6",
+  "orders": {
+    "baseline": 0,
+    "worse_costs": 0
+  },
+  "reconciliation": {
+    "baseline": "pass",
+    "worse_costs": "pass"
+  },
+  "checks": {
+    "live_stream_received": true,
+    "local_status_unauthenticated_http": 401,
+    "local_status_authenticated_http": 200,
+    "frontend_proxy_http": 200,
+    "desktop_browser_errors": 0,
+    "mobile_viewport_width": 390,
+    "mobile_document_width": 390,
+    "source_protocol_link_present": true
+  },
+  "live_order_routing": false,
+  "external_broker_connected": false,
+  "raw_prices_published": false
+}

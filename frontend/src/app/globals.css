@@ -1223,6 +1223,20 @@ footer a {
   display: inline;
   white-space: nowrap;
 }
+.continuous-paper { margin: 24px 0; }
+.continuous-paper .section-title { flex-wrap: wrap; gap: 16px; }
+.continuous-paper .notice { margin-top: 18px; }
+.paper-comparison { display: grid; gap: 12px; }
+.paper-comparison article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 16px; border: 1px solid #dce4dc; border-radius: 10px; }
+.paper-comparison article span { grid-column: 1 / -1; font-size: 12px; color: #53665e; }
+.paper-comparison article b { font-size: 20px; }
+.paper-facts { margin-top: 12px; }
+.paper-facts div { padding: 10px 0; border-bottom: 1px solid #e6ece5; }
+.paper-facts dt { color: #53665e; font-size: 12px; margin-bottom: 4px; }
+.paper-facts dd { margin: 0; overflow-wrap: anywhere; font-size: 14px; }
+@media (max-width: 680px) {
+  .paper-comparison article { grid-template-columns: 1fr; }
+}
 .paper-milestone .section-title {
   flex-wrap: wrap;
   gap: 16px;

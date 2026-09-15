@@ -1,0 +1,24 @@
+# Linux deployment option for an existing persistent host. No cloud account is
+# created by this file. Provision a dedicated tajari user and the paths first.
+[Unit]
+Description=Tajari streaming internal paper service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tajari
+Group=tajari
+WorkingDirectory=/opt/tajari
+ExecStart=/opt/tajari/.venv-paper/bin/python /opt/tajari/scripts/continuous_paper.py run --run-dir /var/lib/tajari/registered-run --env-file /etc/tajari/paper.env --port 8022
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/tajari
+
+[Install]
+WantedBy=multi-user.target

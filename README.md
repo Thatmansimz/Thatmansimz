@@ -6,9 +6,9 @@ Start with the [shared master plan](https://docs.google.com/document/d/1lgEJ4ND8
 
 ## Current operating boundary
 
-- This release starts disarmed, even if an old environment has `TRADING_ENABLED=true`.
+- The original broker-routing backend starts disarmed, even if an old environment has `TRADING_ENABLED=true`.
 - Broker construction and order submission reject Alpaca, Tradovate and unknown adapters. There is no live activation override.
-- Starting trading, starting a forward campaign, replaying into the forward ledger and resetting that ledger are blocked. Historical observations cannot be promoted by renaming or resetting them.
+- Its trading, historical-campaign, replay and reset controls remain blocked. The separate continuous paper service uses a newly registered engineering ledger and an internal simulator only. Historical observations cannot be promoted by renaming or resetting them.
 - All HTTP mutations require a server-side `API_TOKEN`. An unset token disables mutations. Read endpoints are local observation surfaces.
 - Historical evidence is labeled as a dated snapshot. The paper monitor shows only the connected checkout's database and reports unavailable status explicitly.
 - No prop-firm eligibility, income target, score or small paper gain is treated as validation.
@@ -38,7 +38,7 @@ For a production build, run `npm run build`. The existing Docker image uses Next
 
 ## Hosted partner workspace
 
-Open or share **[Tajari production](https://tajari.vercel.app)**. The frontend release is commit `138b0e7`, deployed September 10, 2026.
+Open or share **[Tajari production](https://tajari.vercel.app)**. The September 15 update adds a separate continuous paper-service monitor alongside the original historical evidence.
 
 The production frontend is deployed to the `tajari` project in the `storm-booked` Vercel team. Deploy from `frontend/`, using the committed `vercel.json` and lockfile. This serves the same evidence workspace as the local app, including the downloadable historical evidence, the test plan, live-pilot requirements and pricing calculator.
 
@@ -59,6 +59,10 @@ The test runner changes into a temporary directory before discovery and forces p
 
 ## Evidence and next milestones
 
+The [continuous paper service](docs/CONTINUOUS_PAPER_SERVICE.md) connects existing Databento live access to two durable internal simulation ledgers. Its [registered protocol](evidence/continuous-paper-protocol.json) freezes the strategy, cost comparison, data-access rules and failure behavior. All 150 backend tests pass, including real process crashes and forward-data failure cases. A bounded live connection test received MNQ bars and passed the authenticated dashboard flow. No external broker order route exists. The overnight continuity failure is retained; adversarial fixes were applied through a recorded upgrade of the same run. Follow the guide for supervision, private configuration, stop, backup and code-amendment procedures.
+
+The production partner view needs the free status-store integration to finish before it can display the local worker's current values. It reports that missing connection explicitly. Existing live data access works without a plan change; no new recurring data or hosting purchase was made.
+
 The [September 11 paper milestone](docs/PAPER_MILESTONE_2026-09-11.md) is now an internal example evaluation: 10 registered scenarios reconcile across separate worker/simulator ledgers, including actual process crashes and restart. The isolated `backend/paperlab` core uses an existing paid MNQ research slice and a simulated $50,000 balance. It has no external broker or network order route. The public paper view shows its dated results separately from engine connection status. All 113 isolated backend tests pass; this does not establish profitability or fulfill the six live-pilot requirements.
 
 The [$1,500 pilot package](docs/EVALUATION_PILOT.md) and [buyer tracker](evidence/evaluation-pilot-tracker.csv) are ready for customer discovery. No customer contact, payment or validation is implied by the internal example. Raw market bars and private run databases remain outside the repository and deployment.
@@ -66,3 +70,5 @@ The [$1,500 pilot package](docs/EVALUATION_PILOT.md) and [buyer tracker](evidenc
 The original evidence files in `frontend/public/evidence` preserve the assessment of application base `9808b0e`; new synthetic repair results live in `docs/repair-probes-2026-09-10.json`. Repairs do not rewrite historical results or certify a strategy.
 
 The next commercial milestone is two independent paying customers for a defined evaluation, proposed at $1,500. This is a pricing hypothesis. The next research milestone is a frozen specification and a reproducible case study with honest uncertainty, costs and provenance. Critical Nullius integrity work, a completed broker adapter, realistic execution validation and all six live gates remain outstanding.
+
+The shared master document contains the partner business-structure discussion. The [persistent-host runbook](docs/CLOUD_PAPER_RUNBOOK.md) records the remaining account, cost, deployment and recovery work. No entity filing or new paid subscription was made.

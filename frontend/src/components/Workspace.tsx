@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import PaperMilestone from "./PaperMilestone";
+import ContinuousPaper from "./ContinuousPaper";
 import {
   ArrowUpRight,
   ArrowRight,
@@ -399,9 +400,10 @@ export default function Workspace() {
                 Watch the connected engine without confusing simulated P&L with
                 broker-confirmed performance or validation.
               </PageHeading>
+              <ContinuousPaper />
               <PaperMilestone />
               <div className="section-title">
-                <h2>Engine connection</h2>
+                <h2>Earlier engine connection</h2>
                 <button
                   className="button"
                   disabled={loading}
@@ -492,11 +494,12 @@ export default function Workspace() {
               </div>
               <div className="two-column lower-grid">
                 <section className="panel">
-                  <h3>A frozen run comes next.</h3>
+                  <h3>Separate records for each stage.</h3>
                   <p>
-                    New forward runs are blocked in this release until a
-                    registered protocol and credible research evidence are
-                    reviewed. Restarts leave entries disabled.
+                    The new continuous service uses its own registered
+                    protocol and fresh paper ledger. Its operational results
+                    cannot unlock live trading. The earlier engine’s campaign
+                    controls remain blocked.
                   </p>
                   <p>
                     The legacy engine may be running in a different checkout.
@@ -830,6 +833,9 @@ function Service() {
             rel="noreferrer"
           >
             Open the pilot package <ArrowUpRight size={15} />
+          </a>
+          <a className="text-button" href="https://docs.google.com/document/d/1lgEJ4ND83JNOWouX8QoYAcEl_BB4NahogO3FElErMsY/edit" target="_blank" rel="noreferrer">
+            Ownership and Texas business setup <ArrowUpRight size={15} />
           </a>
           <a
             className="text-button"
