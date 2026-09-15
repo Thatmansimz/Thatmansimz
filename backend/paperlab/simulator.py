@@ -11,8 +11,6 @@ from .storage import bind, canonical, connect, record
 
 class Simulator:
     def __init__(self, path, spec, *, fill_cap=None, reject=None):
-        if spec.get("purpose") != "engineering_replay_only":
-            raise ValueError("This simulator only accepts engineering replays")
         self.spec, self.fill_cap, self.reject = spec, fill_cap, reject
         self.db = connect(path)
         self.db.executescript("""

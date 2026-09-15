@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from .storage import canonical, digest, verify_journal
 
 
-def audit(simulator_path, worker_path, spec, input_bars, reported_account):
+def audit(simulator_path, worker_path, spec, input_bars, reported_account, *, allow_open=False):
     sim = sqlite3.connect(f"file:{simulator_path}?mode=ro", uri=True)
     worker = sqlite3.connect(f"file:{worker_path}?mode=ro", uri=True)
     sim.row_factory = worker.row_factory = sqlite3.Row
@@ -58,7 +58,13 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account):
             require(f["fee_cents"] == expected_fee, f"{f['id']}: wrong fee")
             if f["reason"] in ("entry", "exit"):
                 require(req["eligible_at"] <= b["ts"] < req["expires_at"], f"{f['id']}: fill outside eligibility window")
-                require(req["eligible_at"] == req["submitted_at"] + spec["latency_bars"] * 60, "Latency differs from frozen protocol")
+                earliest = req["submitted_at"] + spec["latency_bars"] * 60
+                if spec.get("purpose") == "engineering_forward_paper":
+                    decision_ns = req.get("decision_received_at_ns", 0)
+                    earliest = max(earliest, ((decision_ns + 60_000_000_000 - 1) // 60_000_000_000) * 60)
+                    require(decision_ns > 0 and f["market_ts"] * 1_000_000_000 >= decision_ns, "Retrospective forward fill")
+                    require(req.get("symbol") == b.get("symbol") and req.get("instrument_id") == b.get("instrument_id"), "Fill crosses actual contract mapping")
+                require(req["eligible_at"] == earliest, "Latency differs from frozen protocol")
                 require(f["side"] == req["side"] and f["reason"] == req["kind"], "Fill side/kind differs from order")
                 price = b["open"] + f["side"] * spec["slippage_ticks"]
                 executed_quantities[f["order_id"]] = executed_quantities.get(f["order_id"], 0) + f["qty"]
@@ -95,16 +101,20 @@ def audit(simulator_path, worker_path, spec, input_bars, reported_account):
             require(abs(position) <= spec["quantity"], "Exposure exceeds frozen quantity")
         broker_position = sim.execute("SELECT COALESCE(SUM(side*qty),0) FROM lots").fetchone()[0]
         require(position == broker_position == reported_account["position"], "Position reconciliation failed")
-        require(position == 0, "End-of-test inventory remains open")
+        if not allow_open:
+            require(position == 0, "End-of-test inventory remains open")
         observed_states = dict(worker.execute("SELECT id,state FROM intents"))
         for key, order in orders.items():
             require(observed_states.get(key) == order["state"], f"{key}: order state not reconciled")
             require(order["filled"] == executed_quantities.get(key, 0), f"{key}: acknowledged fill quantity differs")
             if order["state"] == "filled": require(order["filled"] == intents[key]["qty"], "Incomplete order marked filled")
             if order["state"] == "rejected": require(order["filled"] == 0, "Rejected order has market fills")
-        require(all(o["state"] in ("filled", "cancelled", "rejected", "expired") for o in orders.values()), "Pending order remains at end of test")
+        if not allow_open:
+            require(all(o["state"] in ("filled", "cancelled", "rejected", "expired") for o in orders.values()), "Pending order remains at end of test")
+        mark = input_bars[-1]["close"] if allow_open and input_bars else None
+        unrealized = sum((mark - lot["price"]) * lot["side"] * lot["qty"] * spec["tick_value_cents"] for lot in queue) if mark is not None else 0
         calculated = {"position": position, "gross_pnl_cents": gross, "fees_cents": fees,
-                      "net_pnl_cents": gross - fees, "equity_cents": spec["initial_balance_cents"] + gross - fees}
+                      "net_pnl_cents": gross - fees, "equity_cents": spec["initial_balance_cents"] + gross - fees + unrealized}
         require(calculated == reported_account, "Independent cents-level accounting differs from worker")
         # Check the frozen directional rule using broker market evidence,
         # independently of the worker's strategy implementation.

@@ -1,0 +1,2 @@
+# Dedicated streaming worker; no live-broker packages are installed.
+databento==0.85.0

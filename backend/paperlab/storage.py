@@ -32,8 +32,13 @@ def connect(path):
 
 
 def bind(db, spec):
-    if spec.get("purpose") != "engineering_replay_only":
-        raise ValueError("Only isolated engineering replay is supported")
+    if spec.get("purpose") not in ("engineering_replay_only", "engineering_forward_paper"):
+        raise ValueError("Only isolated engineering paper modes are supported")
+    if spec.get("purpose") == "engineering_forward_paper" and (
+        spec.get("live_order_routing") is not False
+        or spec.get("broker_adapter") != "internal_ohlcv_simulator"
+    ):
+        raise ValueError("Forward engineering requires the internal simulator with no live route")
     for key in ("initial_balance_cents", "tick_value_cents", "quantity", "max_quantity", "max_planned_risk_cents", "daily_loss_limit_cents", "drawdown_limit_cents", "stop_ticks", "latency_bars"):
         if type(spec.get(key)) is not int or spec[key] <= 0:
             raise ValueError(f"Invalid positive integer: {key}")
