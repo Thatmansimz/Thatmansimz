@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "title": "Real production paper-status relay activation",
+  "verified_at": "2026-09-15T15:54:21.220349+00:00",
+  "production_url": "https://tajari.vercel.app/",
+  "endpoint": "https://tajari.vercel.app/api/paper-service",
+  "activation_deployment_id": "dpl_4EJXBtSD3otEjEBep8CkVdsFLdZG",
+  "frontend_source_commit": "aea648d238019739f53d72e6172a9d533954fb62",
+  "worker_source_commit": "3842bee8afcaf1b60942cb673d13a1c3473ce0e0",
+  "store": {
+    "provider": "Upstash Redis",
+    "plan": "free",
+    "automatic_upgrades": false,
+    "paid_plan_purchased": false,
+    "authenticated_rest_ping": "PONG"
+  },
+  "verification": {
+    "unauthenticated_post": [
+      401,
+      {
+        "error": "Unauthorized"
+      }
+    ],
+    "first_real_post": [
+      200,
+      {
+        "accepted": true,
+        "duplicate": false
+      }
+    ],
+    "same_real_retry": [
+      200,
+      {
+        "accepted": true,
+        "duplicate": true
+      }
+    ],
+    "first_get": {
+      "code": 200,
+      "observed_at": "2026-09-15T15:51:36.935947+00:00",
+      "connection": "connecting",
+      "stale": false
+    },
+    "automatic_publish_1": {
+      "at": "2026-09-15T15:52:37.859789+00:00",
+      "status": "published"
+    },
+    "newer_get": {
+      "observed_at": "2026-09-15T15:52:36.818442+00:00",
+      "stale": false,
+      "connection": "streaming"
+    },
+    "older_real_replay_http": 409,
+    "older_did_not_replace_newer": true,
+    "verified_at": "2026-09-15T15:54:21.220349+00:00",
+    "automatic_publish_2": {
+      "at": "2026-09-15T15:53:37.361014+00:00",
+      "status": "published"
+    },
+    "latest_public_status": {
+      "schema_version": 1,
+      "run_id": "mnq-forward-20260915",
+      "observed_at": "2026-09-15T15:53:36.936803+00:00",
+      "registered_at": "2026-09-15T02:31:49.054019+00:00",
+      "protocol_sha256": "517fe4c2af9f031e8d40cd841d8caa51aa15fe48deeaba3373d250481f41f412",
+      "mode": "streaming_internal_paper",
+      "connection": "streaming",
+      "hard_halt": null,
+      "last_message_at": "2026-09-15T15:53:34.988282+00:00",
+      "last_bar_received_at": "2026-09-15T15:53:00.035555+00:00",
+      "last_reconciled_at": "2026-09-15T15:53:36.935194+00:00",
+      "last_audit_attempt_at": "2026-09-15T15:53:36.807099+00:00",
+      "contract": {
+        "symbol": "MNQU6"
+      },
+      "receipts": 27,
+      "excluded_receipts": 1,
+      "complete_opening_opportunities": 0,
+      "observed_opening_dates": 0,
+      "engineering_review_due": false,
+      "scenarios": [
+        {
+          "name": "baseline",
+          "account": {
+            "position": 0,
+            "gross_pnl_cents": 0,
+            "fees_cents": 0,
+            "net_pnl_cents": 0,
+            "equity_cents": 5000000
+          },
+          "orders": 0,
+          "fills": 0,
+          "completed_contract_units": 0,
+          "halted_days": 2,
+          "risk_halted": false,
+          "reconciliation": "pass"
+        },
+        {
+          "name": "worse_costs",
+          "account": {
+            "position": 0,
+            "gross_pnl_cents": 0,
+            "fees_cents": 0,
+            "net_pnl_cents": 0,
+            "equity_cents": 5000000
+          },
+          "orders": 0,
+          "fills": 0,
+          "completed_contract_units": 0,
+          "halted_days": 2,
+          "risk_halted": false,
+          "reconciliation": "pass"
+        }
+      ],
+      "external_broker_connected": false,
+      "live_order_routing": false,
+      "profitability_established": false,
+      "initial_balance_cents": 5000000
+    },
+    "latest_public_stale": false,
+    "private_fields_absent": true
+  },
+  "browser": {
+    "desktop_monitor": "Receiving live market data; actual simulated equity and both reconciliations displayed",
+    "mobile_viewport_width": 390,
+    "mobile_document_width": 390,
+    "console_errors_observed": 0
+  },
+  "continuity": {
+    "same_run": true,
+    "original_registration_preserved": true,
+    "strategy_or_runtime_changed": false,
+    "publisher_activation": "Deliberately stopped while flat; journaled configuration change; archived STOP; restarted under existing supervisor. Initial publish before environment-enabled deployment failed and was followed by successful automatic reports.",
+    "prior_outage_exclusions_retained": true
+  },
+  "limits": [
+    "Aggregate read-only shared status is connected; worker still runs on the Mac.",
+    "No cloud host, off-host restore drill or independent alert delivery is established.",
+    "Provider billing and company/non-display rights remain unverified.",
+    "No complete opening opportunities or trading profitability established.",
+    "No external broker connection or real-money order route."
+  ]
+}
